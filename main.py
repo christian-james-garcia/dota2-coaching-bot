@@ -1,12 +1,14 @@
 import discord
 from discord.ext import commands, tasks
+from aiohttp import web
 import aiohttp
 import asyncio
 import json
+import os
 
-# CONFIGURATION
-DISCORD_BOT_TOKEN = "MTU2NzU5NDU5MzAzMjIxNjcyOQ.G_qPmi.6Yrv2f1e49iHKpqzkY98_KQnocqM9DXyHBkLtI"
-LLM_API_KEY = "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"
+# SECURE CONFIGURATION (Reads safely from Render Environment Variables)
+DISCORD_BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
+LLM_API_KEY = os.environ.get("LLM_API_KEY")
 CHANNEL_ID = 1567594143834702025
 TRACKED_STEAM_IDS = [243689827]
 OPENROUTER_MODEL = "openrouter/free"
@@ -16,6 +18,20 @@ LAST_PROCESSED_MATCH = None
 
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
+
+# Dummy web server for Render health checks
+async def handle_ping(request):
+    return web.Response(text="Dota 2 Coaching Bot is Online!")
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get("/", handle_ping)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.environ.get("PORT", 8080))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    print(f"Web server started on port {port}")
 
 async def load_hero_constants():
     global HERO_NAME_MAP
@@ -143,8 +159,11 @@ async def check_recent_matches():
 async def on_ready():
     print(f"Logged in as {bot.user} (ID: {bot.user.id})")
     await load_hero_constants()
+    await start_web_server()
     check_recent_matches.start()
     print("Match tracking loop started.")
 
 if __name__ == "__main__":
+    if not DISCORD_BOT_TOKEN:
+        raise ValueError("DISCORD_BOT_TOKEN environment variable is missing!")
     bot.run(DISCORD_BOT_TOKEN)
