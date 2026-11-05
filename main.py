@@ -14,7 +14,7 @@ CHANNEL_ID = 1567594143834702025
 TRACKED_STEAM_IDS = [243689827]
 
 # Dynamic Free Auto-Router
-OPENROUTER_MODEL = "google/gemma-4-31b-it:free"
+OPENROUTER_MODEL = "cohere/north-mini-code:free"
 
 HERO_NAME_MAP = {}
 LAST_PROCESSED_MATCH = 0
