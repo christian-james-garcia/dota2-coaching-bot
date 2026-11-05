@@ -13,8 +13,8 @@ LLM_API_KEY = os.environ.get("LLM_API_KEY")
 CHANNEL_ID = 1567594143834702025
 TRACKED_STEAM_IDS = [243689827]
 
-# Dynamic Free Auto-Router
-OPENROUTER_MODEL = "cohere/north-mini-code:free"
+# OpenRouter Model Endpoint Selection
+OPENROUTER_MODEL = "google/gemma-3-27b-it:free"
 
 HERO_NAME_MAP = {}
 LAST_PROCESSED_MATCH = 0
@@ -122,28 +122,27 @@ async def generate_ai_coaching_debrief(match_data: dict) -> str:
     tracked_json = json.dumps(tracked_players, indent=2)
 
     coach_prompt = (
-        f"You are an elite 7,000+ MMR Dota 2 Coach analyzing a competitive team match.\n"
-        f"Accurately analyze the draft, item builds, and laning phase using exact Dota 2 mechanics.\n"
-        f"Do NOT invent non-existent spells or confuse hero skill sets.\n\n"
+        f"You are an expert 7,000+ MMR Dota 2 Coach. Analyze this match strictly using verified Dota 2 game mechanics.\n"
+        f"Do NOT invent spell names, non-existent hero abilities, or incorrect item synergies.\n\n"
         f"MATCH METRICS:\n"
-        f"- Duration: {duration_mins} mins | Winner: {winner}\n"
-        f"- Radiant Draft: {radiant_str}\n"
-        f"- Dire Draft: {dire_str}\n"
-        f"- Our Tracked Player Performance: {tracked_json}\n\n"
-        f"Provide concise, high-MMR analysis under these headers:\n\n"
+        f"- Match Duration: {duration_mins} mins | Winning Team: {winner}\n"
+        f"- Radiant Lineup: {radiant_str}\n"
+        f"- Dire Lineup: {dire_str}\n"
+        f"- Tracked Player Stats: {tracked_json}\n\n"
+        f"Structure your response strictly with these headers:\n\n"
         f"🎯 **1. DRAFT MATCHUP & BETTER PICKS**\n"
-        f"- Evaluate draft win conditions and missing mechanics (lockdown, break, dispel, physical/magic split).\n"
-        f"- Suggest 2 situational alternative hero picks to solve team composition issues.\n\n"
-        f"🛡️ **2. ITEM COUNTER BUILDS**\n"
-        f"- Identify top 3 enemy hero threats.\n"
-        f"- Detail **3 SPECIFIC COUNTER ITEMS** our team missed or delayed, specifying EXACTLY which hero should build them.\n\n"
-        f"⚔️ **3. LANING & CS AT 10 MINS**\n"
-        f"- Critique laning performance, CS@10, and wave control.\n\n"
+        f"- Analyze draft win conditions and missing mechanics (stuns, dispel, break, physical/magic balance).\n"
+        f"- Suggest 2 legitimate hero draft adjustments to counter enemy key spells.\n\n"
+        f"🛡️ **2. ESSENTIAL ITEM COUNTER BUILDS**\n"
+        f"- Name top 3 enemy hero threats.\n"
+        f"- Recommend **3 SPECIFIC COUNTER ITEMS** our team missed, explaining which hero should build them and against whom.\n\n"
+        f"⚔️ **3. LANING PHASE & CS AT 10 MINS**\n"
+        f"- Evaluate CS@10, early laning trades, and wave control.\n\n"
         f"🎒 **4. TIMING & POWER SPIKES**\n"
-        f"- Audit key item timings (BKB, Blink, Manta) and point out key delays.\n\n"
-        f"🗺️ **5. MACRO & NEXT GAME DRILL**\n"
-        f"- Provide 1 concrete team macro rule for next game.\n\n"
-        f"CRITICAL REQUIREMENT: Keep total output under 2,800 characters to fit Discord limits. Be direct and concise."
+        f"- Audit key item timings (BKB, Blink, Manta) and point out game-delaying item gaps.\n\n"
+        f"🗺️ **5. MACRO & NEXT MATCH DRILL**\n"
+        f"- Provide 1 clear, actionable team directive for the next match.\n\n"
+        f"CRITICAL REQUIREMENT: Complete all 5 sections. Keep bullet points punchy and direct."
     )
 
     headers = {
@@ -156,7 +155,7 @@ async def generate_ai_coaching_debrief(match_data: dict) -> str:
     payload = {
         "model": OPENROUTER_MODEL,
         "messages": [{"role": "user", "content": coach_prompt}],
-        "max_tokens": 1000
+        "max_tokens": 2500
     }
 
     async with aiohttp.ClientSession() as session:
@@ -175,6 +174,30 @@ async def generate_ai_coaching_debrief(match_data: dict) -> str:
         except Exception as e:
             print(f"[OPENROUTER] Exception requesting completion: {e}", flush=True)
             return "⚠️ AI Service connectivity failure."
+
+def chunk_debrief(text: str, max_len: int = 3800) -> list:
+    """Splits long debriefs along double-newlines or headers to avoid Discord Embed cut-offs."""
+    if not text:
+        return ["⚠️ Unable to generate debrief text."]
+    if len(text) <= max_len:
+        return [text]
+    
+    chunks = []
+    current_chunk = ""
+    sections = text.split("\n\n")
+    
+    for sec in sections:
+        if len(current_chunk) + len(sec) + 2 > max_len:
+            if current_chunk.strip():
+                chunks.append(current_chunk.strip())
+            current_chunk = sec + "\n\n"
+        else:
+            current_chunk += sec + "\n\n"
+            
+    if current_chunk.strip():
+        chunks.append(current_chunk.strip())
+        
+    return chunks
 
 @tasks.loop(minutes=3)
 async def check_recent_matches():
@@ -216,20 +239,26 @@ async def check_recent_matches():
                                 if match_data:
                                     debrief_text = await generate_ai_coaching_debrief(match_data)
                                     
-                                    # Fallback guard against NoneType
+                                    # Fallback guard against NoneType/empty responses
                                     if not debrief_text:
                                         debrief_text = "⚠️ Unable to generate debrief text from OpenRouter."
                                     
-                                    if len(debrief_text) > 4000:
-                                        debrief_text = debrief_text[:3900] + "\n\n*(Truncated due to Discord character limit)*"
+                                    # Split debrief into embed-safe chunks if necessary
+                                    text_parts = chunk_debrief(debrief_text)
+                                    total_parts = len(text_parts)
 
-                                    embed = discord.Embed(
-                                        title=f"🧠 Draft & Item Counter AI Debrief — Match {latest_match_id}",
-                                        description=debrief_text,
-                                        color=discord.Color.purple()
-                                    )
-                                    embed.set_footer(text="OpenDota Telemetry Engine | OpenRouter Free Router")
-                                    await channel.send(embed=embed)
+                                    for idx, part in enumerate(text_parts, 1):
+                                        title_str = f"🧠 Draft & Item Counter AI Debrief — Match {latest_match_id}"
+                                        if total_parts > 1:
+                                            title_str += f" (Part {idx}/{total_parts})"
+
+                                        embed = discord.Embed(
+                                            title=title_str,
+                                            description=part,
+                                            color=discord.Color.purple()
+                                        )
+                                        embed.set_footer(text=f"OpenDota Telemetry Engine | OpenRouter (Part {idx} of {total_parts})")
+                                        await channel.send(embed=embed)
                             else:
                                 print(f"[DISCORD] Could not access channel ID: {CHANNEL_ID}", flush=True)
                 elif resp.status == 429:
