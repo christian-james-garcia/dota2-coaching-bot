@@ -13,11 +13,11 @@ LLM_API_KEY = os.environ.get("LLM_API_KEY")
 CHANNEL_ID = 1567594143834702025
 TRACKED_STEAM_IDS = [243689827]
 
-# Dedicated fallback list of high-uptime free models
+# Dedicated fallback list of high-uptime free models prioritized by Dota 2 domain accuracy
 FALLBACK_MODELS = [
-    "cohere/north-mini-code:free",
     "nvidia/nemotron-3-ultra-550b-a55b:free",
-    "nvidia/nemotron-3.5-super-vl:free"
+    "nvidia/nemotron-3.5-super-vl:free",
+    "cohere/north-mini-code:free"
 ]
 
 HERO_NAME_MAP = {}
@@ -100,6 +100,9 @@ def extract_match_telemetry(match_data: dict):
             benchmarks = p.get("benchmarks", {})
             gpm_pct = round(benchmarks.get("gold_per_min", {}).get("pct", 0) * 100, 1)
 
+            # Extract raw item IDs safely without corrupting through hero mapping
+            raw_final_items = [p.get(f"item_{i}", 0) for i in range(6)]
+
             detailed_tracked_players.append({
                 "hero": hero_name,
                 "team": "Radiant" if p.get("isRadiant") else "Dire",
@@ -109,7 +112,7 @@ def extract_match_telemetry(match_data: dict):
                 "xpm": p.get("xp_per_min"),
                 "gpm_percentile": f"{gpm_pct}%",
                 "key_item_timings": item_timings if item_timings else "None tracked",
-                "final_items": [HERO_NAME_MAP.get(p.get(f"item_{i}"), "Empty") for i in range(6)],
+                "final_item_ids": raw_final_items,
                 "hero_damage": p.get("hero_damage"),
                 "tower_damage": p.get("tower_damage")
             })
@@ -127,7 +130,7 @@ async def generate_ai_coaching_debrief(match_data: dict) -> str:
 
     coach_prompt = (
         f"You are an expert 7,000+ MMR Dota 2 Coach. Analyze this match strictly using verified Dota 2 game mechanics.\n"
-        f"Do NOT invent spell names, non-existent hero abilities, or incorrect item synergies.\n\n"
+        f"Do NOT invent spell names, non-existent hero abilities, legacy removed items, or incorrect spell interactions (e.g. BKB blocks CM Frostbite).\n\n"
         f"MATCH METRICS:\n"
         f"- Match Duration: {duration_mins} mins | Winning Team: {winner}\n"
         f"- Radiant Lineup: {radiant_str}\n"
@@ -146,7 +149,7 @@ async def generate_ai_coaching_debrief(match_data: dict) -> str:
         f"- Audit key item timings (BKB, Blink, Manta) and point out game-delaying item gaps.\n\n"
         f"🗺️ **5. MACRO & NEXT MATCH DRILL**\n"
         f"- Provide 1 clear, actionable team directive for the next match.\n\n"
-        f"CRITICAL REQUIREMENT: Complete all 5 sections. Keep bullet points punchy and direct."
+        f"CRITICAL REQUIREMENT: Complete all 5 sections. Keep bullet points punchy, direct, and mechanically accurate."
     )
 
     headers = {
