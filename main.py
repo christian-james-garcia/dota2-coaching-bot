@@ -13,11 +13,11 @@ LLM_API_KEY = os.environ.get("LLM_API_KEY")
 CHANNEL_ID = 1567594143834702025
 TRACKED_STEAM_IDS = [243689827]
 
-# Google AI Studio Model Fallback Order
+# Google AI Studio Active Model Fallback Chain
 GEMINI_FALLBACK_MODELS = [
-    "gemini-2.5-flash",
-    "gemini-2.0-flash",
-    "gemini-1.5-flash"
+    "gemini-3.8-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash-lite"
 ]
 
 HERO_NAME_MAP = {}
@@ -100,7 +100,7 @@ def extract_match_telemetry(match_data: dict):
             benchmarks = p.get("benchmarks", {})
             gpm_pct = round(benchmarks.get("gold_per_min", {}).get("pct", 0) * 100, 1)
 
-            # Safely extract raw item IDs without dictionary key mismatch
+            # Extract raw item IDs cleanly
             raw_final_items = [p.get(f"item_{i}", 0) for i in range(6)]
 
             detailed_tracked_players.append({
