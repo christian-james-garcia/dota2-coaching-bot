@@ -13,7 +13,7 @@ LLM_API_KEY = os.environ.get("LLM_API_KEY")
 CHANNEL_ID = 1567594143834702025
 TRACKED_STEAM_IDS = [243689827]
 
-# Highly accurate, domain-knowledgeable free-tier model
+# Dynamic Free Auto-Router
 OPENROUTER_MODEL = "openrouter/free"
 
 HERO_NAME_MAP = {}
@@ -164,7 +164,10 @@ async def generate_ai_coaching_debrief(match_data: dict) -> str:
             async with session.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload) as resp:
                 if resp.status == 200:
                     result = await resp.json()
-                    return result["choices"][0]["message"]["content"]
+                    choices = result.get("choices", [])
+                    if choices and len(choices) > 0:
+                        return choices[0]["message"]["content"]
+                    return "⚠️ AI returned an empty response."
                 else:
                     error_body = await resp.text()
                     print(f"[OPENROUTER] API Error ({resp.status}): {error_body}", flush=True)
@@ -213,6 +216,10 @@ async def check_recent_matches():
                                 if match_data:
                                     debrief_text = await generate_ai_coaching_debrief(match_data)
                                     
+                                    # Fallback guard against NoneType
+                                    if not debrief_text:
+                                        debrief_text = "⚠️ Unable to generate debrief text from OpenRouter."
+                                    
                                     if len(debrief_text) > 4000:
                                         debrief_text = debrief_text[:3900] + "\n\n*(Truncated due to Discord character limit)*"
 
@@ -221,7 +228,7 @@ async def check_recent_matches():
                                         description=debrief_text,
                                         color=discord.Color.purple()
                                     )
-                                    embed.set_footer(text="OpenDota Telemetry Engine | Llama 3.3 70B Free Tier")
+                                    embed.set_footer(text="OpenDota Telemetry Engine | OpenRouter Free Router")
                                     await channel.send(embed=embed)
                             else:
                                 print(f"[DISCORD] Could not access channel ID: {CHANNEL_ID}", flush=True)
