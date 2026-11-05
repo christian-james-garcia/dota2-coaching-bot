@@ -13,8 +13,12 @@ LLM_API_KEY = os.environ.get("LLM_API_KEY")
 CHANNEL_ID = 1567594143834702025
 TRACKED_STEAM_IDS = [243689827]
 
-# Google AI Studio Model Endpoint
-GEMINI_MODEL = "gemini-3.8-flash"
+# Google AI Studio Model Fallback Order
+GEMINI_FALLBACK_MODELS = [
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+    "gemini-1.5-flash"
+]
 
 HERO_NAME_MAP = {}
 LAST_PROCESSED_MATCH = 0
@@ -96,7 +100,7 @@ def extract_match_telemetry(match_data: dict):
             benchmarks = p.get("benchmarks", {})
             gpm_pct = round(benchmarks.get("gold_per_min", {}).get("pct", 0) * 100, 1)
 
-            # Extract raw item IDs cleanly
+            # Safely extract raw item IDs without dictionary key mismatch
             raw_final_items = [p.get(f"item_{i}", 0) for i in range(6)]
 
             detailed_tracked_players.append({
@@ -153,34 +157,33 @@ async def generate_ai_coaching_debrief(match_data: dict) -> str:
         "Content-Type": "application/json"
     }
     
-    payload = {
-        "model": GEMINI_MODEL,
-        "messages": [{"role": "user", "content": coach_prompt}],
-        "max_tokens": 2500
-    }
-
-    # Google AI Studio OpenAI-compatible endpoint URL
     endpoint_url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
 
     async with aiohttp.ClientSession() as session:
-        try:
-            print(f"[GEMINI] Requesting completion using model: {GEMINI_MODEL}", flush=True)
-            async with session.post(endpoint_url, headers=headers, json=payload) as resp:
-                if resp.status == 200:
-                    result = await resp.json()
-                    choices = result.get("choices", [])
-                    if choices and len(choices) > 0:
-                        content = choices[0]["message"]["content"]
-                        if content and len(content.strip()) > 50:
-                            print("[GEMINI] Success with Gemini Flash!", flush=True)
-                            return content
-                else:
-                    error_body = await resp.text()
-                    print(f"[GEMINI] API Error ({resp.status}): {error_body}", flush=True)
-        except Exception as e:
-            print(f"[GEMINI] Exception requesting completion: {e}", flush=True)
+        for model_slug in GEMINI_FALLBACK_MODELS:
+            payload = {
+                "model": model_slug,
+                "messages": [{"role": "user", "content": coach_prompt}],
+                "max_tokens": 2500
+            }
+            try:
+                print(f"[GEMINI] Requesting completion with model: {model_slug}...", flush=True)
+                async with session.post(endpoint_url, headers=headers, json=payload) as resp:
+                    if resp.status == 200:
+                        result = await resp.json()
+                        choices = result.get("choices", [])
+                        if choices and len(choices) > 0:
+                            content = choices[0]["message"]["content"]
+                            if content and len(content.strip()) > 50:
+                                print(f"[GEMINI] Success using model {model_slug}!", flush=True)
+                                return content
+                    else:
+                        error_body = await resp.text()
+                        print(f"[GEMINI] Model {model_slug} returned status ({resp.status}): {error_body}", flush=True)
+            except Exception as e:
+                print(f"[GEMINI] Exception requesting completion from {model_slug}: {e}", flush=True)
 
-    return "⚠️ Failed to generate AI coaching debrief from Google AI Studio. Please check Render logs."
+    return "⚠️ All Google AI Studio models are currently experiencing high demand. Please try again in a few minutes."
 
 def chunk_debrief(text: str, max_len: int = 3800) -> list:
     """Splits long debriefs along double-newlines or headers to prevent Discord Embed cut-offs."""
