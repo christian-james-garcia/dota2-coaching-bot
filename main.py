@@ -13,12 +13,8 @@ LLM_API_KEY = os.environ.get("LLM_API_KEY")
 CHANNEL_ID = 1567594143834702025
 TRACKED_STEAM_IDS = [243689827]
 
-# Dedicated fallback list of high-uptime free models prioritized by Dota 2 domain accuracy
-FALLBACK_MODELS = [
-    "nvidia/nemotron-3-ultra-550b-a55b:free",
-    "nvidia/nemotron-3.5-super-vl:free",
-    "cohere/north-mini-code:free"
-]
+# Google AI Studio Model Endpoint
+GEMINI_MODEL = "gemini-2.5-flash"
 
 HERO_NAME_MAP = {}
 LAST_PROCESSED_MATCH = 0
@@ -100,7 +96,7 @@ def extract_match_telemetry(match_data: dict):
             benchmarks = p.get("benchmarks", {})
             gpm_pct = round(benchmarks.get("gold_per_min", {}).get("pct", 0) * 100, 1)
 
-            # Extract raw item IDs safely without corrupting through hero mapping
+            # Extract raw item IDs cleanly
             raw_final_items = [p.get(f"item_{i}", 0) for i in range(6)]
 
             detailed_tracked_players.append({
@@ -130,7 +126,7 @@ async def generate_ai_coaching_debrief(match_data: dict) -> str:
 
     coach_prompt = (
         f"You are an expert 7,000+ MMR Dota 2 Coach. Analyze this match strictly using verified Dota 2 game mechanics.\n"
-        f"Do NOT invent spell names, non-existent hero abilities, legacy removed items, or incorrect spell interactions (e.g. BKB blocks CM Frostbite).\n\n"
+        f"Do NOT invent spell names, non-existent hero abilities, legacy removed items, or incorrect spell interactions.\n\n"
         f"MATCH METRICS:\n"
         f"- Match Duration: {duration_mins} mins | Winning Team: {winner}\n"
         f"- Radiant Lineup: {radiant_str}\n"
@@ -154,36 +150,37 @@ async def generate_ai_coaching_debrief(match_data: dict) -> str:
 
     headers = {
         "Authorization": f"Bearer {LLM_API_KEY}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://discord.com",
-        "X-Title": "Dota 2 Coaching Bot"
+        "Content-Type": "application/json"
+    }
+    
+    payload = {
+        "model": GEMINI_MODEL,
+        "messages": [{"role": "user", "content": coach_prompt}],
+        "max_tokens": 2500
     }
 
-    async with aiohttp.ClientSession() as session:
-        for model_slug in FALLBACK_MODELS:
-            payload = {
-                "model": model_slug,
-                "messages": [{"role": "user", "content": coach_prompt}],
-                "max_tokens": 2500
-            }
-            try:
-                print(f"[OPENROUTER] Requesting completion using model: {model_slug}", flush=True)
-                async with session.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload) as resp:
-                    if resp.status == 200:
-                        result = await resp.json()
-                        choices = result.get("choices", [])
-                        if choices and len(choices) > 0:
-                            content = choices[0]["message"]["content"]
-                            if content and len(content.strip()) > 50:
-                                print(f"[OPENROUTER] Success with model {model_slug}!", flush=True)
-                                return content
-                    else:
-                        error_body = await resp.text()
-                        print(f"[OPENROUTER] Model {model_slug} failed ({resp.status}): {error_body}", flush=True)
-            except Exception as e:
-                print(f"[OPENROUTER] Exception requesting completion from {model_slug}: {e}", flush=True)
+    # Google AI Studio OpenAI-compatible endpoint URL
+    endpoint_url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
 
-    return "⚠️ All configured free-tier AI models are currently rate-limited or unavailable. Retrying shortly."
+    async with aiohttp.ClientSession() as session:
+        try:
+            print(f"[GEMINI] Requesting completion using model: {GEMINI_MODEL}", flush=True)
+            async with session.post(endpoint_url, headers=headers, json=payload) as resp:
+                if resp.status == 200:
+                    result = await resp.json()
+                    choices = result.get("choices", [])
+                    if choices and len(choices) > 0:
+                        content = choices[0]["message"]["content"]
+                        if content and len(content.strip()) > 50:
+                            print("[GEMINI] Success with Gemini Flash!", flush=True)
+                            return content
+                else:
+                    error_body = await resp.text()
+                    print(f"[GEMINI] API Error ({resp.status}): {error_body}", flush=True)
+        except Exception as e:
+            print(f"[GEMINI] Exception requesting completion: {e}", flush=True)
+
+    return "⚠️ Failed to generate AI coaching debrief from Google AI Studio. Please check Render logs."
 
 def chunk_debrief(text: str, max_len: int = 3800) -> list:
     """Splits long debriefs along double-newlines or headers to prevent Discord Embed cut-offs."""
@@ -250,7 +247,7 @@ async def check_recent_matches():
                                     debrief_text = await generate_ai_coaching_debrief(match_data)
                                     
                                     if not debrief_text:
-                                        debrief_text = "⚠️ Unable to generate debrief text from OpenRouter."
+                                        debrief_text = "⚠️ Unable to generate debrief text from Google AI Studio."
                                     
                                     # Split debrief into embed-safe chunks if necessary
                                     text_parts = chunk_debrief(debrief_text)
@@ -266,7 +263,7 @@ async def check_recent_matches():
                                             description=part,
                                             color=discord.Color.purple()
                                         )
-                                        embed.set_footer(text=f"OpenDota Telemetry Engine | OpenRouter (Part {idx} of {total_parts})")
+                                        embed.set_footer(text=f"OpenDota Telemetry Engine | Google AI Studio (Part {idx} of {total_parts})")
                                         await channel.send(embed=embed)
                             else:
                                 print(f"[DISCORD] Could not access channel ID: {CHANNEL_ID}", flush=True)
