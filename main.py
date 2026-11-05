@@ -14,7 +14,7 @@ CHANNEL_ID = 1567594143834702025
 TRACKED_STEAM_IDS = [243689827]
 
 # OpenRouter Model Endpoint Selection
-OPENROUTER_MODEL = "google/gemma-3-27b-it:free"
+OPENROUTER_MODEL = "cohere/north-mini-code:free"
 
 HERO_NAME_MAP = {}
 LAST_PROCESSED_MATCH = 0
