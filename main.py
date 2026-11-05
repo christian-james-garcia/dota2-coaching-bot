@@ -13,8 +13,12 @@ LLM_API_KEY = os.environ.get("LLM_API_KEY")
 CHANNEL_ID = 1567594143834702025
 TRACKED_STEAM_IDS = [243689827]
 
-# OpenRouter Model Endpoint Selection
-OPENROUTER_MODEL = "cohere/north-mini-code:free"
+# Dedicated fallback list of high-uptime free models
+FALLBACK_MODELS = [
+    "cohere/north-mini-code:free",
+    "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "nvidia/nemotron-3.5-super-vl:free"
+]
 
 HERO_NAME_MAP = {}
 LAST_PROCESSED_MATCH = 0
@@ -151,32 +155,35 @@ async def generate_ai_coaching_debrief(match_data: dict) -> str:
         "HTTP-Referer": "https://discord.com",
         "X-Title": "Dota 2 Coaching Bot"
     }
-    
-    payload = {
-        "model": OPENROUTER_MODEL,
-        "messages": [{"role": "user", "content": coach_prompt}],
-        "max_tokens": 2500
-    }
 
     async with aiohttp.ClientSession() as session:
-        try:
-            async with session.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload) as resp:
-                if resp.status == 200:
-                    result = await resp.json()
-                    choices = result.get("choices", [])
-                    if choices and len(choices) > 0:
-                        return choices[0]["message"]["content"]
-                    return "⚠️ AI returned an empty response."
-                else:
-                    error_body = await resp.text()
-                    print(f"[OPENROUTER] API Error ({resp.status}): {error_body}", flush=True)
-                    return f"⚠️ Failed to generate AI coaching debrief (API Status: {resp.status})."
-        except Exception as e:
-            print(f"[OPENROUTER] Exception requesting completion: {e}", flush=True)
-            return "⚠️ AI Service connectivity failure."
+        for model_slug in FALLBACK_MODELS:
+            payload = {
+                "model": model_slug,
+                "messages": [{"role": "user", "content": coach_prompt}],
+                "max_tokens": 2500
+            }
+            try:
+                print(f"[OPENROUTER] Requesting completion using model: {model_slug}", flush=True)
+                async with session.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload) as resp:
+                    if resp.status == 200:
+                        result = await resp.json()
+                        choices = result.get("choices", [])
+                        if choices and len(choices) > 0:
+                            content = choices[0]["message"]["content"]
+                            if content and len(content.strip()) > 50:
+                                print(f"[OPENROUTER] Success with model {model_slug}!", flush=True)
+                                return content
+                    else:
+                        error_body = await resp.text()
+                        print(f"[OPENROUTER] Model {model_slug} failed ({resp.status}): {error_body}", flush=True)
+            except Exception as e:
+                print(f"[OPENROUTER] Exception requesting completion from {model_slug}: {e}", flush=True)
+
+    return "⚠️ All configured free-tier AI models are currently rate-limited or unavailable. Retrying shortly."
 
 def chunk_debrief(text: str, max_len: int = 3800) -> list:
-    """Splits long debriefs along double-newlines or headers to avoid Discord Embed cut-offs."""
+    """Splits long debriefs along double-newlines or headers to prevent Discord Embed cut-offs."""
     if not text:
         return ["⚠️ Unable to generate debrief text."]
     if len(text) <= max_len:
@@ -239,7 +246,6 @@ async def check_recent_matches():
                                 if match_data:
                                     debrief_text = await generate_ai_coaching_debrief(match_data)
                                     
-                                    # Fallback guard against NoneType/empty responses
                                     if not debrief_text:
                                         debrief_text = "⚠️ Unable to generate debrief text from OpenRouter."
                                     
