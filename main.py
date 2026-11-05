@@ -10,12 +10,12 @@ import traceback
 # SECURE CONFIGURATION
 DISCORD_BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
 LLM_API_KEY = os.environ.get("LLM_API_KEY") # Google AI Studio Key
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY") # Groq Key
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY") # Groq Key (Optional Fallback)
 CHANNEL_ID = 1567594143834702025
 TRACKED_STEAM_IDS = [243689827]
 
 HERO_NAME_MAP = {}
-LAST_PROCESSED_MATCH = 0
+LAST_PROCESSED_MATCH = None
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -146,7 +146,7 @@ async def generate_ai_coaching_debrief(match_data: dict) -> str:
     )
 
     async with aiohttp.ClientSession() as session:
-        # 1. Primary Provider: Active Google AI Studio Models
+        # 1. Primary Provider: Active Google AI Studio Endpoints
         gemini_models = ["gemini-3.8-flash", "gemini-3.5-flash-lite"]
         google_url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
         google_headers = {
@@ -209,7 +209,7 @@ async def generate_ai_coaching_debrief(match_data: dict) -> str:
                 except Exception as e:
                     print(f"[GROQ FALLBACK] Exception requesting completion from {model_slug}: {e}", flush=True)
 
-    return None # Return None if all providers hit rate limits
+    return None
 
 def chunk_debrief(text: str, max_len: int = 3800) -> list:
     """Splits long debriefs along double-newlines or headers to prevent Discord Embed cut-offs."""
@@ -252,7 +252,6 @@ async def check_recent_matches():
                     if recent:
                         latest_match_id = recent[0]["match_id"]
                         
-                        # Initial bot boot baseline
                         if LAST_PROCESSED_MATCH is None:
                             LAST_PROCESSED_MATCH = latest_match_id
                             print(f"[POLL] Initialized baseline match ID: {latest_match_id}. Polling active...", flush=True)
@@ -260,7 +259,6 @@ async def check_recent_matches():
 
                         print(f"[POLL] Polling check: Latest={latest_match_id} | Cached={LAST_PROCESSED_MATCH}", flush=True)
                         
-                        # Process if a new match is detected OR if the current match was never finished successfully
                         if latest_match_id != LAST_PROCESSED_MATCH:
                             print(f"[MATCH] Target match detected: {latest_match_id}", flush=True)
                             
@@ -274,14 +272,10 @@ async def check_recent_matches():
                                 if match_data:
                                     debrief_text = await generate_ai_coaching_debrief(match_data)
                                     
-                                    # GUARANTEED RETRY GUARD:
-                                    # If debrief generation failed, DO NOT update LAST_PROCESSED_MATCH.
-                                    # It will try again on the next cycle (every 3 mins) until successful.
                                     if not debrief_text:
                                         print(f"[RETRY] All AI endpoints busy. Will retry match {latest_match_id} in next cycle.", flush=True)
                                         return
                                     
-                                    # Successful generation: Cache the match ID now so we don't repeat it
                                     LAST_PROCESSED_MATCH = latest_match_id
                                     
                                     text_parts = chunk_debrief(debrief_text)
@@ -297,3 +291,28 @@ async def check_recent_matches():
                                             description=part,
                                             color=discord.Color.purple()
                                         )
+                                        embed.set_footer(text=f"OpenDota Telemetry Engine | AI Debrief (Part {idx} of {total_parts})")
+                                        await channel.send(embed=embed)
+                            else:
+                                print(f"[DISCORD] Could not access channel ID: {CHANNEL_ID}", flush=True)
+                elif resp.status == 429:
+                    print("[POLL] OpenDota API rate limited (429). Retrying next cycle.", flush=True)
+                else:
+                    print(f"[POLL] OpenDota API return code: {resp.status}", flush=True)
+    except Exception as e:
+        print(f"[POLL ERROR] Exception during match polling: {e}", flush=True)
+        traceback.print_exc()
+
+@bot.event
+async def on_ready():
+    print(f"[BOT] Logged in as {bot.user} (ID: {bot.user.id})", flush=True)
+    await load_hero_constants()
+    await start_web_server()
+    if not check_recent_matches.is_running():
+        check_recent_matches.start()
+        print("[BOT] Match tracking loop started.", flush=True)
+
+if __name__ == "__main__":
+    if not DISCORD_BOT_TOKEN:
+        raise ValueError("DISCORD_BOT_TOKEN environment variable is missing!")
+    bot.run(DISCORD_BOT_TOKEN)
