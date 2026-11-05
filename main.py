@@ -19,7 +19,7 @@ LAST_PROCESSED_MATCH = None
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Dummy web server for Render health checks
+# Health check endpoint for Render
 async def handle_ping(request):
     return web.Response(text="Dota 2 Coaching Bot is Online!")
 
@@ -28,10 +28,12 @@ async def start_web_server():
     app.router.add_get("/", handle_ping)
     runner = web.AppRunner(app)
     await runner.setup()
-    port = int(os.environ.get("PORT", 8080))
+    
+    # Strictly read PORT assigned by Render, defaulting to 10000
+    port = int(os.environ.get("PORT", 10000))
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
-    print(f"Web server started on port {port}")
+    print(f"Web server successfully bound to port {port}")
 
 async def load_hero_constants():
     global HERO_NAME_MAP
@@ -175,6 +177,7 @@ async def check_recent_matches():
                     
                     if LAST_PROCESSED_MATCH is None:
                         LAST_PROCESSED_MATCH = latest_match_id
+                        print(f"Initial match ID cached: {latest_match_id}. Polling for next match...")
                         return
 
                     if latest_match_id != LAST_PROCESSED_MATCH:
@@ -207,8 +210,9 @@ async def on_ready():
     print(f"Logged in as {bot.user} (ID: {bot.user.id})")
     await load_hero_constants()
     await start_web_server()
-    check_recent_matches.start()
-    print("Match tracking loop started.")
+    if not check_recent_matches.is_running():
+        check_recent_matches.start()
+        print("Match tracking loop started.")
 
 if __name__ == "__main__":
     if not DISCORD_BOT_TOKEN:
