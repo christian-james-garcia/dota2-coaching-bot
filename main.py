@@ -15,7 +15,7 @@ CHANNEL_ID = 1567594143834702025
 TRACKED_STEAM_IDS = [243689827]
 
 HERO_NAME_MAP = {}
-LAST_PROCESSED_MATCH = None
+LAST_PROCESSED_MATCH = 0
 
 intents = discord.Intents.default()
 intents.message_content = True
