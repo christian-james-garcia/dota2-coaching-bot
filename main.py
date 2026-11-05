@@ -117,23 +117,131 @@ async def generate_ai_coaching_debrief(match_data: dict) -> str:
     duration_mins = match_data.get("duration", 0) // 60
     winner = "Radiant" if match_data.get("radiant_win") else "Dire"
     
-    coach_prompt = f"""
-    You are an elite 7,000+ MMR Dota 2 Coach analyzing a 5-stack team match.
-    Provide a deeply tactical post-game analysis covering Draft, Laning, Macro, and explicit ITEM COUNTER BUILDS.
+    radiant_str = ", ".join(radiant_lineup)
+    dire_str = ", ".join(dire_lineup)
+    tracked_json = json.dumps(tracked_players, indent=2)
 
-    MATCH SETUP & TELEMETRY:
-    - Match Duration: {duration_mins} minutes
-    - Winning Team: {winner}
-    - Full Radiant Lineup: {", ".join(radiant_lineup)}
-    - Full Dire Lineup: {", ".join(dire_lineup)}
-    - Our Tracked Players Performance & Items: {json.dumps(tracked_players, indent=2)}
+    coach_prompt = (
+        f"You are an elite 7,000+ MMR Dota 2 Coach analyzing a 5-stack team match.\n"
+        f"Provide a deeply tactical post-game analysis covering Draft, Laning, Macro, and explicit ITEM COUNTER BUILDS.\n\n"
+        f"MATCH SETUP & TELEMETRY:\n"
+        f"- Match Duration: {duration_mins} minutes\n"
+        f"- Winning Team: {winner}\n"
+        f"- Full Radiant Lineup: {radiant_str}\n"
+        f"- Full Dire Lineup: {dire_str}\n"
+        f"- Our Tracked Players Performance & Items: {tracked_json}\n\n"
+        f"Please structure your response strictly using the following headers:\n\n"
+        f"🎯 **1. DRAFT MATCHUP & BETTER HERO PICKS**\n"
+        f"- Evaluate draft win conditions and missing mechanics (cc, break, damage types, frontline).\n"
+        f"- Suggest 2–3 better alternative hero picks to counter the enemy draft and explain why.\n\n"
+        f"🛡️ **2. ESSENTIAL ITEM COUNTER BUILDS**\n"
+        f"- Identify specific enemy hero threats (e.g., passives, healing, evasion, ghost scepters, mobility).\n"
+        f"- Detail **3–4 SPECIFIC COUNTER ITEMS** our team should have purchased, specifying EXACTLY which hero/role should have built them and against which enemy hero.\n\n"
+        f"⚔️ **3. LANING PHASE (0–10 MINS)**\n"
+        f"- Analyze lane matchups, CS@10, and tempo.\n\n"
+        f"🎒 **4. TIMING & POWER SPIKE AUDIT**\n"
+        f"- Critique core timing spikes (BKB, Blink, Manta) and highlight delays or game-losing item gaps.\n\n"
+        f"🗺️ **5. MACRO & TEAM DRILL**\n"
+        f"- Analyze Roshan control, map control, and give 1 operational rule for next match.\n\n"
+        f"Keep tone direct, highly tactical, and concise. Use bold text and bullet points."
+    )
 
-    Please structure your response strictly using the following headers:
+    headers = {
+        "Authorization": f"Bearer {LLM_API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://discord.com",
+        "X-Title": "Dota 2 Coaching Bot"
+    }
+    
+    payload = {
+        "model": OPENROUTER_MODEL,
+        "messages": [{"role": "user", "content": coach_prompt}]
+    }
 
-    🎯 **1. DRAFT MATCHUP & BETTER HERO PICKS**
-    - Evaluate draft win conditions and missing mechanics (cc, break, damage types, frontline).
-    - Suggest 2–3 better alternative hero picks to counter the enemy draft and explain why.
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload) as resp:
+                if resp.status == 200:
+                    result = await resp.json()
+                    return result["choices"][0]["message"]["content"]
+                else:
+                    error_body = await resp.text()
+                    print(f"[OPENROUTER] API Error ({resp.status}): {error_body}")
+                    return f"⚠️ Failed to generate AI coaching debrief (API Status: {resp.status})."
+        except Exception as e:
+            print(f"[OPENROUTER] Exception requesting completion: {e}")
+            return "⚠️ AI Service connectivity failure."
 
-    🛡️ **2. ESSENTIAL ITEM COUNTER BUILDS**
-    - Identify specific enemy hero threats (e.g., passives, healing, evasion, ghost scepters, mobility).
-    - Detail **3–4 SPEC
+@tasks.loop(minutes=3)
+async def check_recent_matches():
+    global LAST_PROCESSED_MATCH
+    if not TRACKED_STEAM_IDS:
+        return
+
+    steam_id = TRACKED_STEAM_IDS[0]
+    url = f"https://api.opendota.com/api/players/{steam_id}/recentMatches"
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as resp:
+                if resp.status == 200:
+                    recent = await resp.json()
+                    if recent:
+                        latest_match_id = recent[0]["match_id"]
+                        
+                        if LAST_PROCESSED_MATCH is None:
+                            LAST_PROCESSED_MATCH = latest_match_id
+                            print(f"[POLL] Initialized baseline match ID: {latest_match_id}. Polling active...")
+                            return
+
+                        print(f"[POLL] Polling check: Latest={latest_match_id} | Cached={LAST_PROCESSED_MATCH}")
+                        
+                        if latest_match_id != LAST_PROCESSED_MATCH:
+                            LAST_PROCESSED_MATCH = latest_match_id
+                            print(f"[MATCH] New match detected! ID: {latest_match_id}")
+                            
+                            channel = bot.get_channel(CHANNEL_ID)
+                            if channel:
+                                await channel.send(f"📊 **New Match Detected (Match ID: `{latest_match_id}`)!** Analyzing draft, telemetry, and item counter builds...")
+                                
+                                parse_req = await session.post(f"https://api.opendota.com/api/request/{latest_match_id}")
+                                print(f"[OPENDOTA] Parse request status: {parse_req.status}")
+                                await asyncio.sleep(12)
+                                
+                                match_data = await fetch_opendota_match(latest_match_id)
+                                if match_data:
+                                    debrief_text = await generate_ai_coaching_debrief(match_data)
+                                    
+                                    if len(debrief_text) > 4000:
+                                        debrief_text = debrief_text[:3900] + "\n\n*(Truncated due to Discord character limit)*"
+
+                                    embed = discord.Embed(
+                                        title=f"🧠 Draft & Item Counter AI Debrief — Match {latest_match_id}",
+                                        description=debrief_text,
+                                        color=discord.Color.purple()
+                                    )
+                                    embed.set_footer(text="OpenDota Telemetry Engine | OpenRouter Free Tier")
+                                    await channel.send(embed=embed)
+                            else:
+                                print(f"[DISCORD] Could not access channel ID: {CHANNEL_ID}")
+                elif resp.status == 429:
+                    print("[POLL] OpenDota API rate limited (429). Retrying next cycle.")
+                else:
+                    print(f"[POLL] OpenDota API return code: {resp.status}")
+    except Exception as e:
+        print(f"[POLL ERROR] Exception during match polling: {e}")
+        traceback.print_exc()
+
+@bot.event
+async def on_ready():
+    print(f"[BOT] Logged in as {bot.user} (ID: {bot.user.id})")
+    await load_hero_constants()
+    await start_web_server()
+    if not check_recent_matches.is_running():
+        check_recent_matches.start()
+        print("[BOT] Match tracking loop started.")
+
+if __name__ == "__main__":
+    if not DISCORD_BOT_TOKEN:
+        raise ValueError("DISCORD_BOT_TOKEN environment variable is missing!")
+    bot.run(DISCORD_BOT_TOKEN)
