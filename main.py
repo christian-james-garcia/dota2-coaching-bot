@@ -5,6 +5,7 @@ import aiohttp
 import asyncio
 import json
 import os
+import traceback
 
 # SECURE CONFIGURATION
 DISCORD_BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
@@ -29,26 +30,35 @@ async def start_web_server():
     runner = web.AppRunner(app)
     await runner.setup()
     
-    # Strictly read PORT assigned by Render, defaulting to 10000
     port = int(os.environ.get("PORT", 10000))
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
-    print(f"Web server successfully bound to port {port}")
+    print(f"[SERVER] Web server successfully bound to port {port}")
 
 async def load_hero_constants():
     global HERO_NAME_MAP
     async with aiohttp.ClientSession() as session:
-        async with session.get("https://api.opendota.com/api/heroes") as resp:
-            if resp.status == 200:
-                heroes = await resp.json()
-                HERO_NAME_MAP = {h["id"]: h["localized_name"] for h in heroes}
+        try:
+            async with session.get("https://api.opendota.com/api/heroes") as resp:
+                if resp.status == 200:
+                    heroes = await resp.json()
+                    HERO_NAME_MAP = {h["id"]: h["localized_name"] for h in heroes}
+                    print(f"[HEROES] Loaded {len(HERO_NAME_MAP)} hero constants.")
+                else:
+                    print(f"[HEROES] Failed to fetch hero constants. Status: {resp.status}")
+        except Exception as e:
+            print(f"[HEROES] Exception loading hero constants: {e}")
 
 async def fetch_opendota_match(match_id: int):
     url = f"https://api.opendota.com/api/matches/{match_id}"
     async with aiohttp.ClientSession() as session:
-        async with session.get(url) as resp:
-            if resp.status == 200:
-                return await resp.json()
+        try:
+            async with session.get(url) as resp:
+                if resp.status == 200:
+                    return await resp.json()
+                print(f"[OPENDOTA] Match {match_id} fetch failed with status {resp.status}")
+        except Exception as e:
+            print(f"[OPENDOTA] Error fetching match {match_id}: {e}")
     return None
 
 def extract_match_telemetry(match_data: dict):
@@ -123,7 +133,7 @@ async def generate_ai_coaching_debrief(match_data: dict) -> str:
 
     🛡️ **2. ESSENTIAL ITEM COUNTER BUILDS**
     - Identify specific enemy hero threats (e.g., passives, healing, evasion, ghost scepters, mobility).
-    - Detail **3–4 SPECIFIC COUNTER ITEMS** our team should have purchased, specifying EXACTLY which hero/role should have built them and against which enemy hero (e.g., "Mars (Pos 3) needed Silver Edge to Break Bristleback's passive", "Jakiro (Pos 5) needed Spirit Vessel to stop Morphling's regen", "Sven (Pos 1) needed Nullifier to purge Ghost Scepters").
+    - Detail **3–4 SPECIFIC COUNTER ITEMS** our team should have purchased, specifying EXACTLY which hero/role should have built them and against which enemy hero.
 
     ⚔️ **3. LANING PHASE (0–10 MINS)**
     - Analyze lane matchups, CS@10, and tempo.
@@ -150,14 +160,18 @@ async def generate_ai_coaching_debrief(match_data: dict) -> str:
     }
 
     async with aiohttp.ClientSession() as session:
-        async with session.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload) as resp:
-            if resp.status == 200:
-                result = await resp.json()
-                return result["choices"][0]["message"]["content"]
-            else:
-                error_body = await resp.text()
-                print(f"OpenRouter API Error ({resp.status}): {error_body}")
-                return "⚠️ Failed to generate AI coaching debrief."
+        try:
+            async with session.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload) as resp:
+                if resp.status == 200:
+                    result = await resp.json()
+                    return result["choices"][0]["message"]["content"]
+                else:
+                    error_body = await resp.text()
+                    print(f"[OPENROUTER] API Error ({resp.status}): {error_body}")
+                    return "⚠️ Failed to generate AI coaching debrief."
+        except Exception as e:
+            print(f"[OPENROUTER] Exception requesting completion: {e}")
+            return "⚠️ AI Service connectivity failure."
 
 @tasks.loop(minutes=3)
 async def check_recent_matches():
@@ -168,51 +182,66 @@ async def check_recent_matches():
     steam_id = TRACKED_STEAM_IDS[0]
     url = f"https://api.opendota.com/api/players/{steam_id}/recentMatches"
     
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as resp:
-            if resp.status == 200:
-                recent = await resp.json()
-                if recent:
-                    latest_match_id = recent[0]["match_id"]
-                    
-                    if LAST_PROCESSED_MATCH is None:
-                        LAST_PROCESSED_MATCH = latest_match_id
-                        print(f"Initial match ID cached: {latest_match_id}. Polling for next match...")
-                        return
-
-                    if latest_match_id != LAST_PROCESSED_MATCH:
-                        LAST_PROCESSED_MATCH = latest_match_id
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as resp:
+                if resp.status == 200:
+                    recent = await resp.json()
+                    if recent:
+                        latest_match_id = recent[0]["match_id"]
                         
-                        channel = bot.get_channel(CHANNEL_ID)
-                        if channel:
-                            await channel.send(f"📊 **New Match Detected (Match ID: `{latest_match_id}`)!** Analyzing draft, telemetry, and item counter builds...")
-                            
-                            await session.post(f"https://api.opendota.com/api/request/{latest_match_id}")
-                            await asyncio.sleep(12)
-                            
-                            match_data = await fetch_opendota_match(latest_match_id)
-                            if match_data:
-                                debrief_text = await generate_ai_coaching_debrief(match_data)
-                                
-                                if len(debrief_text) > 4000:
-                                    debrief_text = debrief_text[:3900] + "\n\n*(Truncated due to Discord character limit)*"
+                        if LAST_PROCESSED_MATCH is None:
+                            LAST_PROCESSED_MATCH = latest_match_id
+                            print(f"[POLL] Initialized baseline match ID: {latest_match_id}. Polling active...")
+                            return
 
-                                embed = discord.Embed(
-                                    title=f"🧠 Draft & Item Counter AI Debrief — Match {latest_match_id}",
-                                    description=debrief_text,
-                                    color=discord.Color.purple()
-                                )
-                                embed.set_footer(text="OpenDota Telemetry Engine | OpenRouter Free Tier")
-                                await channel.send(embed=embed)
+                        print(f"[POLL] Polling check: Latest={latest_match_id} | Cached={LAST_PROCESSED_MATCH}")
+                        
+                        if latest_match_id != LAST_PROCESSED_MATCH:
+                            LAST_PROCESSED_MATCH = latest_match_id
+                            print(f"[MATCH] New match detected! ID: {latest_match_id}")
+                            
+                            channel = bot.get_channel(CHANNEL_ID)
+                            if channel:
+                                await channel.send(f"📊 **New Match Detected (Match ID: `{latest_match_id}`)!** Analyzing draft, telemetry, and item counter builds...")
+                                
+                                # Request OpenDota parse trigger
+                                parse_req = await session.post(f"https://api.opendota.com/api/request/{latest_match_id}")
+                                print(f"[OPENDOTA] Parse request status: {parse_req.status}")
+                                await asyncio.sleep(12)
+                                
+                                match_data = await fetch_opendota_match(latest_match_id)
+                                if match_data:
+                                    debrief_text = await generate_ai_coaching_debrief(match_data)
+                                    
+                                    if len(debrief_text) > 4000:
+                                        debrief_text = debrief_text[:3900] + "\n\n*(Truncated due to Discord character limit)*"
+
+                                    embed = discord.Embed(
+                                        title=f"🧠 Draft & Item Counter AI Debrief — Match {latest_match_id}",
+                                        description=debrief_text,
+                                        color=discord.Color.purple()
+                                    )
+                                    embed.set_footer(text="OpenDota Telemetry Engine | OpenRouter Free Tier")
+                                    await channel.send(embed=embed)
+                            else:
+                                print(f"[DISCORD] Could not access channel ID: {CHANNEL_ID}")
+                elif resp.status == 429:
+                    print("[POLL] OpenDota API rate limited (429). Retrying next cycle.")
+                else:
+                    print(f"[POLL] OpenDota API return code: {resp.status}")
+    except Exception as e:
+        print(f"[POLL ERROR] Exception during match polling: {e}")
+        traceback.print_exc()
 
 @bot.event
 async def on_ready():
-    print(f"Logged in as {bot.user} (ID: {bot.user.id})")
+    print(f"[BOT] Logged in as {bot.user} (ID: {bot.user.id})")
     await load_hero_constants()
     await start_web_server()
     if not check_recent_matches.is_running():
         check_recent_matches.start()
-        print("Match tracking loop started.")
+        print("[BOT] Match tracking loop started.")
 
 if __name__ == "__main__":
     if not DISCORD_BOT_TOKEN:
