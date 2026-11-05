@@ -9,16 +9,10 @@ import traceback
 
 # SECURE CONFIGURATION
 DISCORD_BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
-LLM_API_KEY = os.environ.get("LLM_API_KEY")
+LLM_API_KEY = os.environ.get("LLM_API_KEY") # Google AI Studio Key
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY") # Groq Key
 CHANNEL_ID = 1567594143834702025
 TRACKED_STEAM_IDS = [243689827]
-
-# Google AI Studio Active Model Fallback Chain
-GEMINI_FALLBACK_MODELS = [
-    "gemini-3.8-flash",
-    "gemini-3.6-flash",
-    "gemini-3.5-flash-lite"
-]
 
 HERO_NAME_MAP = {}
 LAST_PROCESSED_MATCH = 0
@@ -100,7 +94,6 @@ def extract_match_telemetry(match_data: dict):
             benchmarks = p.get("benchmarks", {})
             gpm_pct = round(benchmarks.get("gold_per_min", {}).get("pct", 0) * 100, 1)
 
-            # Extract raw item IDs cleanly
             raw_final_items = [p.get(f"item_{i}", 0) for i in range(6)]
 
             detailed_tracked_players.append({
@@ -152,15 +145,16 @@ async def generate_ai_coaching_debrief(match_data: dict) -> str:
         f"CRITICAL REQUIREMENT: Complete all 5 sections. Keep bullet points punchy, direct, and mechanically accurate."
     )
 
-    headers = {
-        "Authorization": f"Bearer {LLM_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    
-    endpoint_url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-
     async with aiohttp.ClientSession() as session:
-        for model_slug in GEMINI_FALLBACK_MODELS:
+        # 1. TRY GOOGLE AI STUDIO ENDPOINTS FIRST
+        gemini_models = ["gemini-3.8-flash", "gemini-3.5-flash-lite"]
+        google_url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+        google_headers = {
+            "Authorization": f"Bearer {LLM_API_KEY}",
+            "Content-Type": "application/json"
+        }
+
+        for model_slug in gemini_models:
             payload = {
                 "model": model_slug,
                 "messages": [{"role": "user", "content": coach_prompt}],
@@ -168,7 +162,7 @@ async def generate_ai_coaching_debrief(match_data: dict) -> str:
             }
             try:
                 print(f"[GEMINI] Requesting completion with model: {model_slug}...", flush=True)
-                async with session.post(endpoint_url, headers=headers, json=payload) as resp:
+                async with session.post(google_url, headers=google_headers, json=payload) as resp:
                     if resp.status == 200:
                         result = await resp.json()
                         choices = result.get("choices", [])
@@ -179,11 +173,43 @@ async def generate_ai_coaching_debrief(match_data: dict) -> str:
                                 return content
                     else:
                         error_body = await resp.text()
-                        print(f"[GEMINI] Model {model_slug} returned status ({resp.status}): {error_body}", flush=True)
+                        print(f"[GEMINI] Model {model_slug} status ({resp.status}): {error_body}", flush=True)
             except Exception as e:
                 print(f"[GEMINI] Exception requesting completion from {model_slug}: {e}", flush=True)
 
-    return "⚠️ All Google AI Studio models are currently experiencing high demand. Please try again in a few minutes."
+        # 2. AUTOMATED FALLBACK TO GROQ CLOUD IF GOOGLE AI STUDIO FAILS (503 / 429)
+        if GROQ_API_KEY:
+            groq_models = ["llama-3.3-70b-versatile", "gemma-2-9b-it"]
+            groq_url = "https://api.groq.com/openai/v1/chat/completions"
+            groq_headers = {
+                "Authorization": f"Bearer {GROQ_API_KEY}",
+                "Content-Type": "application/json"
+            }
+
+            for model_slug in groq_models:
+                payload = {
+                    "model": model_slug,
+                    "messages": [{"role": "user", "content": coach_prompt}],
+                    "max_tokens": 2500
+                }
+                try:
+                    print(f"[GROQ FALLBACK] Requesting completion with model: {model_slug}...", flush=True)
+                    async with session.post(groq_url, headers=groq_headers, json=payload) as resp:
+                        if resp.status == 200:
+                            result = await resp.json()
+                            choices = result.get("choices", [])
+                            if choices and len(choices) > 0:
+                                content = choices[0]["message"]["content"]
+                                if content and len(content.strip()) > 50:
+                                    print(f"[GROQ FALLBACK] Success using Groq {model_slug}!", flush=True)
+                                    return content
+                        else:
+                            error_body = await resp.text()
+                            print(f"[GROQ FALLBACK] Model {model_slug} status ({resp.status}): {error_body}", flush=True)
+                except Exception as e:
+                    print(f"[GROQ FALLBACK] Exception requesting completion from {model_slug}: {e}", flush=True)
+
+    return "⚠️ Both Google AI Studio and Groq are temporarily rate-limited. Retrying shortly."
 
 def chunk_debrief(text: str, max_len: int = 3800) -> list:
     """Splits long debriefs along double-newlines or headers to prevent Discord Embed cut-offs."""
@@ -250,9 +276,8 @@ async def check_recent_matches():
                                     debrief_text = await generate_ai_coaching_debrief(match_data)
                                     
                                     if not debrief_text:
-                                        debrief_text = "⚠️ Unable to generate debrief text from Google AI Studio."
+                                        debrief_text = "⚠️ Unable to generate debrief text from AI endpoints."
                                     
-                                    # Split debrief into embed-safe chunks if necessary
                                     text_parts = chunk_debrief(debrief_text)
                                     total_parts = len(text_parts)
 
@@ -266,7 +291,7 @@ async def check_recent_matches():
                                             description=part,
                                             color=discord.Color.purple()
                                         )
-                                        embed.set_footer(text=f"OpenDota Telemetry Engine | Google AI Studio (Part {idx} of {total_parts})")
+                                        embed.set_footer(text=f"OpenDota Telemetry Engine | AI Debrief (Part {idx} of {total_parts})")
                                         await channel.send(embed=embed)
                             else:
                                 print(f"[DISCORD] Could not access channel ID: {CHANNEL_ID}", flush=True)
