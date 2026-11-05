@@ -14,7 +14,7 @@ CHANNEL_ID = 1567594143834702025
 TRACKED_STEAM_IDS = [243689827]
 
 # Highly accurate, domain-knowledgeable free-tier model
-OPENROUTER_MODEL = "meta-llama/llama-3.3-70b-instruct:free"
+OPENROUTER_MODEL = "openrouter/free"
 
 HERO_NAME_MAP = {}
 LAST_PROCESSED_MATCH = 0
