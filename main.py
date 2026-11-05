@@ -13,8 +13,8 @@ LLM_API_KEY = os.environ.get("LLM_API_KEY")
 CHANNEL_ID = 1567594143834702025
 TRACKED_STEAM_IDS = [243689827]
 
-# Reliable free-tier model configuration
-OPENROUTER_MODEL = "nvidia/nemotron-3.5-lightning:free"
+# Highly accurate, domain-knowledgeable free-tier model
+OPENROUTER_MODEL = "meta-llama/llama-3.3-70b-instruct:free"
 
 HERO_NAME_MAP = {}
 LAST_PROCESSED_MATCH = 0
@@ -36,7 +36,7 @@ async def start_web_server():
     port = int(os.environ.get("PORT", 10000))
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
-    print(f"[SERVER] Web server successfully bound to port {port}")
+    print(f"[SERVER] Web server successfully bound to port {port}", flush=True)
 
 async def load_hero_constants():
     global HERO_NAME_MAP
@@ -46,11 +46,11 @@ async def load_hero_constants():
                 if resp.status == 200:
                     heroes = await resp.json()
                     HERO_NAME_MAP = {h["id"]: h["localized_name"] for h in heroes}
-                    print(f"[HEROES] Loaded {len(HERO_NAME_MAP)} hero constants.")
+                    print(f"[HEROES] Loaded {len(HERO_NAME_MAP)} hero constants.", flush=True)
                 else:
-                    print(f"[HEROES] Failed to fetch hero constants. Status: {resp.status}")
+                    print(f"[HEROES] Failed to fetch hero constants. Status: {resp.status}", flush=True)
         except Exception as e:
-            print(f"[HEROES] Exception loading hero constants: {e}")
+            print(f"[HEROES] Exception loading hero constants: {e}", flush=True)
 
 async def fetch_opendota_match(match_id: int):
     url = f"https://api.opendota.com/api/matches/{match_id}"
@@ -59,9 +59,9 @@ async def fetch_opendota_match(match_id: int):
             async with session.get(url) as resp:
                 if resp.status == 200:
                     return await resp.json()
-                print(f"[OPENDOTA] Match {match_id} fetch failed with status {resp.status}")
+                print(f"[OPENDOTA] Match {match_id} fetch failed with status {resp.status}", flush=True)
         except Exception as e:
-            print(f"[OPENDOTA] Error fetching match {match_id}: {e}")
+            print(f"[OPENDOTA] Error fetching match {match_id}: {e}", flush=True)
     return None
 
 def extract_match_telemetry(match_data: dict):
@@ -122,28 +122,28 @@ async def generate_ai_coaching_debrief(match_data: dict) -> str:
     tracked_json = json.dumps(tracked_players, indent=2)
 
     coach_prompt = (
-        f"You are an elite 7,000+ MMR Dota 2 Coach analyzing a 5-stack team match.\n"
-        f"Provide a deeply tactical post-game analysis covering Draft, Laning, Macro, and explicit ITEM COUNTER BUILDS.\n\n"
-        f"MATCH SETUP & TELEMETRY:\n"
-        f"- Match Duration: {duration_mins} minutes\n"
-        f"- Winning Team: {winner}\n"
-        f"- Full Radiant Lineup: {radiant_str}\n"
-        f"- Full Dire Lineup: {dire_str}\n"
-        f"- Our Tracked Players Performance & Items: {tracked_json}\n\n"
-        f"Please structure your response strictly using the following headers:\n\n"
-        f"🎯 **1. DRAFT MATCHUP & BETTER HERO PICKS**\n"
-        f"- Evaluate draft win conditions and missing mechanics (cc, break, damage types, frontline).\n"
-        f"- Suggest 2–3 better alternative hero picks to counter the enemy draft and explain why.\n\n"
-        f"🛡️ **2. ESSENTIAL ITEM COUNTER BUILDS**\n"
-        f"- Identify specific enemy hero threats (e.g., passives, healing, evasion, ghost scepters, mobility).\n"
-        f"- Detail **3–4 SPECIFIC COUNTER ITEMS** our team should have purchased, specifying EXACTLY which hero/role should have built them and against which enemy hero.\n\n"
-        f"⚔️ **3. LANING PHASE (0–10 MINS)**\n"
-        f"- Analyze lane matchups, CS@10, and tempo.\n\n"
-        f"🎒 **4. TIMING & POWER SPIKE AUDIT**\n"
-        f"- Critique core timing spikes (BKB, Blink, Manta) and highlight delays or game-losing item gaps.\n\n"
-        f"🗺️ **5. MACRO & TEAM DRILL**\n"
-        f"- Analyze Roshan control, map control, and give 1 operational rule for next match.\n\n"
-        f"Keep tone direct, highly tactical, and concise. Use bold text and bullet points."
+        f"You are an elite 7,000+ MMR Dota 2 Coach analyzing a competitive team match.\n"
+        f"Accurately analyze the draft, item builds, and laning phase using exact Dota 2 mechanics.\n"
+        f"Do NOT invent non-existent spells or confuse hero skill sets.\n\n"
+        f"MATCH METRICS:\n"
+        f"- Duration: {duration_mins} mins | Winner: {winner}\n"
+        f"- Radiant Draft: {radiant_str}\n"
+        f"- Dire Draft: {dire_str}\n"
+        f"- Our Tracked Player Performance: {tracked_json}\n\n"
+        f"Provide concise, high-MMR analysis under these headers:\n\n"
+        f"🎯 **1. DRAFT MATCHUP & BETTER PICKS**\n"
+        f"- Evaluate draft win conditions and missing mechanics (lockdown, break, dispel, physical/magic split).\n"
+        f"- Suggest 2 situational alternative hero picks to solve team composition issues.\n\n"
+        f"🛡️ **2. ITEM COUNTER BUILDS**\n"
+        f"- Identify top 3 enemy hero threats.\n"
+        f"- Detail **3 SPECIFIC COUNTER ITEMS** our team missed or delayed, specifying EXACTLY which hero should build them.\n\n"
+        f"⚔️ **3. LANING & CS AT 10 MINS**\n"
+        f"- Critique laning performance, CS@10, and wave control.\n\n"
+        f"🎒 **4. TIMING & POWER SPIKES**\n"
+        f"- Audit key item timings (BKB, Blink, Manta) and point out key delays.\n\n"
+        f"🗺️ **5. MACRO & NEXT GAME DRILL**\n"
+        f"- Provide 1 concrete team macro rule for next game.\n\n"
+        f"CRITICAL REQUIREMENT: Keep total output under 2,800 characters to fit Discord limits. Be direct and concise."
     )
 
     headers = {
@@ -155,7 +155,8 @@ async def generate_ai_coaching_debrief(match_data: dict) -> str:
     
     payload = {
         "model": OPENROUTER_MODEL,
-        "messages": [{"role": "user", "content": coach_prompt}]
+        "messages": [{"role": "user", "content": coach_prompt}],
+        "max_tokens": 1000
     }
 
     async with aiohttp.ClientSession() as session:
@@ -166,10 +167,10 @@ async def generate_ai_coaching_debrief(match_data: dict) -> str:
                     return result["choices"][0]["message"]["content"]
                 else:
                     error_body = await resp.text()
-                    print(f"[OPENROUTER] API Error ({resp.status}): {error_body}")
+                    print(f"[OPENROUTER] API Error ({resp.status}): {error_body}", flush=True)
                     return f"⚠️ Failed to generate AI coaching debrief (API Status: {resp.status})."
         except Exception as e:
-            print(f"[OPENROUTER] Exception requesting completion: {e}")
+            print(f"[OPENROUTER] Exception requesting completion: {e}", flush=True)
             return "⚠️ AI Service connectivity failure."
 
 @tasks.loop(minutes=3)
@@ -191,21 +192,21 @@ async def check_recent_matches():
                         
                         if LAST_PROCESSED_MATCH is None:
                             LAST_PROCESSED_MATCH = latest_match_id
-                            print(f"[POLL] Initialized baseline match ID: {latest_match_id}. Polling active...")
+                            print(f"[POLL] Initialized baseline match ID: {latest_match_id}. Polling active...", flush=True)
                             return
 
-                        print(f"[POLL] Polling check: Latest={latest_match_id} | Cached={LAST_PROCESSED_MATCH}")
+                        print(f"[POLL] Polling check: Latest={latest_match_id} | Cached={LAST_PROCESSED_MATCH}", flush=True)
                         
                         if latest_match_id != LAST_PROCESSED_MATCH:
                             LAST_PROCESSED_MATCH = latest_match_id
-                            print(f"[MATCH] New match detected! ID: {latest_match_id}")
+                            print(f"[MATCH] New match detected! ID: {latest_match_id}", flush=True)
                             
                             channel = bot.get_channel(CHANNEL_ID)
                             if channel:
                                 await channel.send(f"📊 **New Match Detected (Match ID: `{latest_match_id}`)!** Analyzing draft, telemetry, and item counter builds...")
                                 
                                 parse_req = await session.post(f"https://api.opendota.com/api/request/{latest_match_id}")
-                                print(f"[OPENDOTA] Parse request status: {parse_req.status}")
+                                print(f"[OPENDOTA] Parse request status: {parse_req.status}", flush=True)
                                 await asyncio.sleep(12)
                                 
                                 match_data = await fetch_opendota_match(latest_match_id)
@@ -220,26 +221,26 @@ async def check_recent_matches():
                                         description=debrief_text,
                                         color=discord.Color.purple()
                                     )
-                                    embed.set_footer(text="OpenDota Telemetry Engine | OpenRouter Free Tier")
+                                    embed.set_footer(text="OpenDota Telemetry Engine | Llama 3.3 70B Free Tier")
                                     await channel.send(embed=embed)
                             else:
-                                print(f"[DISCORD] Could not access channel ID: {CHANNEL_ID}")
+                                print(f"[DISCORD] Could not access channel ID: {CHANNEL_ID}", flush=True)
                 elif resp.status == 429:
-                    print("[POLL] OpenDota API rate limited (429). Retrying next cycle.")
+                    print("[POLL] OpenDota API rate limited (429). Retrying next cycle.", flush=True)
                 else:
-                    print(f"[POLL] OpenDota API return code: {resp.status}")
+                    print(f"[POLL] OpenDota API return code: {resp.status}", flush=True)
     except Exception as e:
-        print(f"[POLL ERROR] Exception during match polling: {e}")
+        print(f"[POLL ERROR] Exception during match polling: {e}", flush=True)
         traceback.print_exc()
 
 @bot.event
 async def on_ready():
-    print(f"[BOT] Logged in as {bot.user} (ID: {bot.user.id})")
+    print(f"[BOT] Logged in as {bot.user} (ID: {bot.user.id})", flush=True)
     await load_hero_constants()
     await start_web_server()
     if not check_recent_matches.is_running():
         check_recent_matches.start()
-        print("[BOT] Match tracking loop started.")
+        print("[BOT] Match tracking loop started.", flush=True)
 
 if __name__ == "__main__":
     if not DISCORD_BOT_TOKEN:
