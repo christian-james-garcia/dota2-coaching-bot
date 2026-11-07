@@ -1,44 +1,200 @@
-import discord
-from discord.ext import commands, tasks
-from aiohttp import web
-import aiohttp
 import asyncio
 import json
 import os
+import time
 import traceback
+from pathlib import Path
+from typing import Optional
 
-# SECURE CONFIGURATION
+import aiohttp
+import discord
+from aiohttp import web
+from discord.ext import commands, tasks
+
+# Configure these values in your hosting environment.
 DISCORD_BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
-LLM_API_KEY = os.environ.get("LLM_API_KEY") # Google AI Studio Key
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY") # Groq Key (Optional Fallback)
+LLM_API_KEY = os.environ.get("LLM_API_KEY")  # Google AI Studio key
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")  # Optional fallback
 CHANNEL_ID = 1567594143834702025
-TRACKED_STEAM_IDS = [243689827]
+TRACKED_STEAM_IDS = [243689827]  # OpenDota 32-bit account IDs
+STATE_FILE = Path(os.environ.get("LAST_PROCESSED_MATCH_FILE", "last_processed_match.json"))
+HISTORY_PAGE_SIZE = 100
 
 HERO_NAME_MAP = {}
-LAST_PROCESSED_MATCH = None
+MATCH_STATE = {"accounts": {}, "pending": []}
+STATE_LOADED = False
+WEB_RUNNER = None
 
 intents = discord.Intents.default()
-intents.message_content = True
-bot = commands.Bot(command_prefix="!", intents=intents)
+# Message content intent is not needed because this bot defines no prefix commands.
 
-# Health check endpoint for Render
+
 async def handle_ping(request):
     return web.Response(text="Dota 2 Coaching Bot is Online!")
 
+
 async def start_web_server():
+    """Start the health endpoint once during bot startup."""
+    global WEB_RUNNER
+    if WEB_RUNNER is not None:
+        return
+
     app = web.Application()
     app.router.add_get("/", handle_ping)
     runner = web.AppRunner(app)
     await runner.setup()
-    
     port = int(os.environ.get("PORT", 10000))
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
+    WEB_RUNNER = runner
     print(f"[SERVER] Web server successfully bound to port {port}", flush=True)
+
+
+def load_match_state() -> dict:
+    try:
+        state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+        # Migrate the one-cursor state file made by the earlier version.
+        if "last_processed_match" in state and TRACKED_STEAM_IDS:
+            old_cursor = state.get("last_processed_match")
+            if old_cursor is not None:
+                account_id = str(TRACKED_STEAM_IDS[0])
+                return {
+                    "accounts": {
+                        account_id: {
+                            "last_processed_match": int(old_cursor),
+                            "discovered_through_match": int(old_cursor),
+                        }
+                    },
+                    "pending": [],
+                }
+        accounts = state.get("accounts", {})
+        pending = state.get("pending", [])
+        if not isinstance(accounts, dict) or not isinstance(pending, list):
+            raise ValueError("state must contain an accounts object and pending list")
+        return {"accounts": accounts, "pending": pending}
+    except FileNotFoundError:
+        return {"accounts": {}, "pending": []}
+    except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        print(f"[STATE] Could not read {STATE_FILE}: {exc}", flush=True)
+        return {"accounts": {}, "pending": []}
+
+
+def save_match_state() -> None:
+    """Persist per-account cursors and queued matches atomically."""
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    temporary_file = STATE_FILE.with_suffix(STATE_FILE.suffix + ".tmp")
+    temporary_file.write_text(json.dumps(MATCH_STATE), encoding="utf-8")
+    os.replace(temporary_file, STATE_FILE)
+
+
+def defer_pending_match(account_id: int, match_id: int, reason: str) -> None:
+    """Back off on a failed match without blocking later matches in the queue."""
+    for item in MATCH_STATE["pending"]:
+        if int(item.get("account_id", -1)) == account_id and int(item.get("match_id", -1)) == match_id:
+            attempts = int(item.get("attempts", 0)) + 1
+            delay_seconds = min(3600, 60 * (2 ** min(attempts - 1, 5)))
+            item["attempts"] = attempts
+            item["next_attempt_at"] = time.time() + delay_seconds
+            print(
+                f"[RETRY] Match {match_id} deferred for {delay_seconds // 60} minute(s) "
+                f"after {reason}; attempt {attempts}.",
+                flush=True,
+            )
+            save_match_state()
+            return
+
+
+async def discover_unseen_matches(session: aiohttp.ClientSession, account_id: int):
+    """Queue every listed match newer than this account's saved cursor.
+
+    On first startup, queue only the latest match as requested. Later runs page
+    backwards until the cursor is reached, so multiple matches are not skipped.
+    """
+    account_key = str(account_id)
+    account_state = MATCH_STATE["accounts"].setdefault(
+        account_key,
+        {"last_processed_match": None, "discovered_through_match": None},
+    )
+    cursor = account_state.get("last_processed_match")
+    cursor = int(cursor) if cursor is not None else None
+    watermark = account_state.get("discovered_through_match", cursor)
+    watermark = int(watermark) if watermark is not None else None
+    known = {
+        (str(item.get("account_id")), int(item.get("match_id")))
+        for item in MATCH_STATE["pending"]
+        if isinstance(item, dict) and item.get("account_id") is not None and item.get("match_id") is not None
+    }
+
+    offset = 0
+    found_watermark = False
+    first_page = True
+    newest_discovered = watermark
+    while True:
+        url = f"https://api.opendota.com/api/players/{account_id}/matches"
+        # significant=0 includes non-standard modes as well as ranked/turbo.
+        params = {"limit": HISTORY_PAGE_SIZE, "offset": offset, "significant": 0}
+        try:
+            async with session.get(url, params=params) as resp:
+                if resp.status == 429:
+                    print(f"[HISTORY] Rate limited for account {account_id}; retrying next cycle.", flush=True)
+                    return
+                if resp.status != 200:
+                    print(f"[HISTORY] Fetch failed for account {account_id}: HTTP {resp.status}", flush=True)
+                    return
+                page = await resp.json()
+        except Exception as exc:
+            print(f"[HISTORY] Fetch error for account {account_id}: {exc}", flush=True)
+            return
+
+        if not page:
+            break
+
+        # A new installation starts with exactly the latest available match.
+        if watermark is None and first_page:
+            newest = next((m.get("match_id") for m in page if m.get("match_id") is not None), None)
+            if newest is not None:
+                MATCH_STATE["pending"].append({"account_id": account_id, "match_id": int(newest)})
+                account_state["discovered_through_match"] = int(newest)
+                print(f"[HISTORY] First run: queued latest match {newest} for account {account_id}.", flush=True)
+            save_match_state()
+            return
+
+        for match in page:
+            match_id = match.get("match_id")
+            if match_id is None:
+                continue
+            match_id = int(match_id)
+            if watermark is not None and match_id <= watermark:
+                found_watermark = True
+                continue
+            key = (account_key, match_id)
+            if key not in known:
+                MATCH_STATE["pending"].append({"account_id": account_id, "match_id": match_id})
+                known.add(key)
+            if newest_discovered is None or match_id > newest_discovered:
+                newest_discovered = match_id
+
+        save_match_state()
+        if found_watermark or len(page) < HISTORY_PAGE_SIZE:
+            break
+        offset += len(page)
+        first_page = False
+        # Stay comfortably below OpenDota's unauthenticated request rate limit.
+        await asyncio.sleep(1.1)
+
+    if watermark is None and first_page:
+        print(f"[HISTORY] No match history available yet for account {account_id}.", flush=True)
+    elif found_watermark:
+        print(f"[HISTORY] Reached discovery cursor {watermark} for account {account_id}.", flush=True)
+    if newest_discovered is not None:
+        account_state["discovered_through_match"] = newest_discovered
+    save_match_state()
+
 
 async def load_hero_constants():
     global HERO_NAME_MAP
-    async with aiohttp.ClientSession() as session:
+    timeout = aiohttp.ClientTimeout(total=20)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
         try:
             async with session.get("https://api.opendota.com/api/heroes") as resp:
                 if resp.status == 200:
@@ -47,150 +203,164 @@ async def load_hero_constants():
                     print(f"[HEROES] Loaded {len(HERO_NAME_MAP)} hero constants.", flush=True)
                 else:
                     print(f"[HEROES] Failed to fetch hero constants. Status: {resp.status}", flush=True)
-        except Exception as e:
-            print(f"[HEROES] Exception loading hero constants: {e}", flush=True)
+        except Exception as exc:
+            print(f"[HEROES] Exception loading hero constants: {exc}", flush=True)
 
-async def fetch_opendota_match(match_id: int):
+
+async def fetch_opendota_match(session: aiohttp.ClientSession, match_id: int):
     url = f"https://api.opendota.com/api/matches/{match_id}"
-    async with aiohttp.ClientSession() as session:
-        try:
-            async with session.get(url) as resp:
-                if resp.status == 200:
-                    return await resp.json()
-                print(f"[OPENDOTA] Match {match_id} fetch failed with status {resp.status}", flush=True)
-        except Exception as e:
-            print(f"[OPENDOTA] Error fetching match {match_id}: {e}", flush=True)
+    try:
+        async with session.get(url) as resp:
+            if resp.status == 200:
+                return await resp.json()
+            print(f"[OPENDOTA] Match {match_id} fetch failed with status {resp.status}", flush=True)
+    except Exception as exc:
+        print(f"[OPENDOTA] Error fetching match {match_id}: {exc}", flush=True)
     return None
+
+
+def match_has_parsed_player_data(match_data: Optional[dict]) -> bool:
+    """Wait for replay-derived fields before asking for item and lane analysis."""
+    players = (match_data or {}).get("players") or []
+    return bool(players) and any(
+        "purchase_log" in player or "lh_ten" in player or "benchmarks" in player
+        for player in players
+    )
+
+
+async def fetch_parsed_match(session: aiohttp.ClientSession, match_id: int):
+    """Request parsing, then poll with a bounded wait instead of a fixed sleep."""
+    request_url = f"https://api.opendota.com/api/request/{match_id}"
+    try:
+        async with session.post(request_url) as resp:
+            print(f"[OPENDOTA] Parse request status: {resp.status}", flush=True)
+    except Exception as exc:
+        print(f"[OPENDOTA] Parse request failed for {match_id}: {exc}", flush=True)
+
+    for attempt in range(6):
+        if attempt:
+            await asyncio.sleep(5)
+        match_data = await fetch_opendota_match(session, match_id)
+        if match_has_parsed_player_data(match_data):
+            return match_data
+        print(f"[OPENDOTA] Match {match_id} is not parsed yet ({attempt + 1}/6).", flush=True)
+    return None
+
 
 def extract_match_telemetry(match_data: dict):
     radiant_heroes = []
     dire_heroes = []
     detailed_tracked_players = []
 
-    for p in match_data.get("players", []):
-        hero_name = HERO_NAME_MAP.get(p.get("hero_id"), f"Hero_{p.get('hero_id')}")
-        
-        if p.get("isRadiant"):
+    for player in match_data.get("players", []):
+        hero_id = player.get("hero_id")
+        hero_name = HERO_NAME_MAP.get(hero_id, f"Hero_{hero_id}")
+
+        if player.get("isRadiant"):
             radiant_heroes.append(hero_name)
         else:
             dire_heroes.append(hero_name)
 
-        if p.get("account_id") in TRACKED_STEAM_IDS:
-            purchase_log = p.get("purchase_log", []) or []
-            key_items = [
-                "black_king_bar", "blink", "manta", "orchid", "bfury", "force_staff", 
-                "glimmer_cape", "pipe", "silver_edge", "desolator", "vessel", 
+        if player.get("account_id") in TRACKED_STEAM_IDS:
+            purchase_log = player.get("purchase_log") or []
+            key_items = {
+                "black_king_bar", "blink", "manta", "orchid", "bfury", "force_staff",
+                "glimmer_cape", "pipe", "silver_edge", "desolator", "vessel",
                 "heavens_halberd", "aghanims_scepter", "nullifier", "rod_of_atos",
-                "monkey_king_bar", "bloodthorn", "scythe_of_vyse", "skadi", "shivas_guard"
-            ]
-            
+                "monkey_king_bar", "bloodthorn", "scythe_of_vyse", "skadi", "shivas_guard",
+            }
             item_timings = {}
             for item in purchase_log:
                 item_key = item.get("key")
                 if item_key in key_items and item_key not in item_timings:
-                    time_mins = item.get("time", 0) // 60
-                    item_timings[item_key] = f"{time_mins}m"
+                    item_timings[item_key] = f"{item.get('time', 0) // 60}m"
 
-            benchmarks = p.get("benchmarks", {})
-            gpm_pct = round(benchmarks.get("gold_per_min", {}).get("pct", 0) * 100, 1)
-
-            raw_final_items = [p.get(f"item_{i}", 0) for i in range(6)]
+            benchmarks = player.get("benchmarks") or {}
+            gpm_percentile = round(
+                (benchmarks.get("gold_per_min") or {}).get("pct", 0) * 100, 1
+            )
+            final_item_ids = [player.get(f"item_{i}", 0) for i in range(6)]
 
             detailed_tracked_players.append({
                 "hero": hero_name,
-                "team": "Radiant" if p.get("isRadiant") else "Dire",
-                "kda": f"{p.get('kills')}/{p.get('deaths')}/{p.get('assists')}",
-                "cs_at_10": p.get("lh_ten", "N/A"),
-                "gpm": p.get("gold_per_min"),
-                "xpm": p.get("xp_per_min"),
-                "gpm_percentile": f"{gpm_pct}%",
+                "team": "Radiant" if player.get("isRadiant") else "Dire",
+                "kda": f"{player.get('kills')}/{player.get('deaths')}/{player.get('assists')}",
+                "cs_at_10": player.get("lh_ten", "N/A"),
+                "gpm": player.get("gold_per_min"),
+                "xpm": player.get("xp_per_min"),
+                "gpm_percentile": f"{gpm_percentile}%",
                 "key_item_timings": item_timings if item_timings else "None tracked",
-                "final_item_ids": raw_final_items,
-                "hero_damage": p.get("hero_damage"),
-                "tower_damage": p.get("tower_damage")
+                "final_item_ids": final_item_ids,
+                "hero_damage": player.get("hero_damage"),
+                "tower_damage": player.get("tower_damage"),
             })
 
     return radiant_heroes, dire_heroes, detailed_tracked_players
 
-async def generate_ai_coaching_debrief(match_data: dict) -> str:
+
+async def generate_ai_coaching_debrief(match_data: dict) -> Optional[str]:
     radiant_lineup, dire_lineup, tracked_players = extract_match_telemetry(match_data)
     duration_mins = match_data.get("duration", 0) // 60
     winner = "Radiant" if match_data.get("radiant_win") else "Dire"
-    
-    radiant_str = ", ".join(radiant_lineup)
-    dire_str = ", ".join(dire_lineup)
-    tracked_json = json.dumps(tracked_players, indent=2)
 
     coach_prompt = (
-        f"You are an expert 7,000+ MMR Dota 2 Coach. Analyze this match strictly using verified Dota 2 game mechanics.\n"
-        f"Do NOT invent spell names, non-existent hero abilities, legacy removed items, or incorrect spell interactions.\n\n"
-        f"MATCH METRICS:\n"
-        f"- Match Duration: {duration_mins} mins | Winning Team: {winner}\n"
-        f"- Radiant Lineup: {radiant_str}\n"
-        f"- Dire Lineup: {dire_str}\n"
-        f"- Tracked Player Stats: {tracked_json}\n\n"
-        f"Structure your response strictly with these headers:\n\n"
-        f"🎯 **1. DRAFT MATCHUP & BETTER PICKS**\n"
-        f"- Analyze draft win conditions and missing mechanics (stuns, dispel, break, physical/magic balance).\n"
-        f"- Suggest 2 legitimate hero draft adjustments to counter enemy key spells.\n\n"
-        f"🛡️ **2. ESSENTIAL ITEM COUNTER BUILDS**\n"
-        f"- Name top 3 enemy hero threats.\n"
-        f"- Recommend **3 SPECIFIC COUNTER ITEMS** our team missed, explaining which hero should build them and against whom.\n\n"
-        f"⚔️ **3. LANING PHASE & CS AT 10 MINS**\n"
-        f"- Evaluate CS@10, early laning trades, and wave control.\n\n"
-        f"🎒 **4. TIMING & POWER SPIKES**\n"
-        f"- Audit key item timings (BKB, Blink, Manta) and point out game-delaying item gaps.\n\n"
-        f"🗺️ **5. MACRO & NEXT MATCH DRILL**\n"
-        f"- Provide 1 clear, actionable team directive for the next match.\n\n"
-        f"CRITICAL REQUIREMENT: Complete all 5 sections. Keep bullet points punchy, direct, and mechanically accurate."
+        "You are an expert Dota 2 coach. Use only the match data supplied below. "
+        "Do not claim to know lane trades, wave control, spell usage, or team item purchases "
+        "unless those details appear in the data. If evidence is missing, say so. "
+        "Avoid inventing hero abilities, item interactions, or patch-specific mechanics.\n\n"
+        f"MATCH METRICS:\n- Duration: {duration_mins} minutes | Winner: {winner}\n"
+        f"- Radiant lineup: {', '.join(radiant_lineup)}\n"
+        f"- Dire lineup: {', '.join(dire_lineup)}\n"
+        f"- Tracked player stats: {json.dumps(tracked_players, indent=2)}\n\n"
+        "Structure your response with these sections:\n"
+        "🎯 **1. DRAFT MATCHUP** — Describe likely win conditions from the lineups; label these as hypotheses.\n"
+        "🛡️ **2. ITEM IDEAS** — Suggest up to 3 counters, name the likely buyer and target, and note uncertainty.\n"
+        "⚔️ **3. TRACKED PLAYER** — Discuss the supplied CS@10, KDA, and available stats only.\n"
+        "🎒 **4. ITEM TIMINGS** — Review only the tracked player's recorded timings.\n"
+        "🗺️ **5. NEXT MATCH DRILL** — Give one actionable drill based on the available evidence.\n"
     )
 
-    async with aiohttp.ClientSession() as session:
-        # 1. Primary Provider: Active Google AI Studio Endpoints
-        gemini_models = ["gemini-3.8-flash", "gemini-3.5-flash-lite"]
-        google_url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-        google_headers = {
-            "Authorization": f"Bearer {LLM_API_KEY}",
-            "Content-Type": "application/json"
-        }
-
-        for model_slug in gemini_models:
-            payload = {
-                "model": model_slug,
-                "messages": [{"role": "user", "content": coach_prompt}],
-                "max_tokens": 2500
+    timeout = aiohttp.ClientTimeout(total=45)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        if LLM_API_KEY:
+            google_url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+            google_headers = {
+                "Authorization": f"Bearer {LLM_API_KEY}",
+                "Content-Type": "application/json",
             }
-            try:
-                print(f"[GEMINI] Requesting completion with model: {model_slug}...", flush=True)
-                async with session.post(google_url, headers=google_headers, json=payload) as resp:
-                    if resp.status == 200:
-                        result = await resp.json()
-                        choices = result.get("choices", [])
-                        if choices and len(choices) > 0:
-                            content = choices[0]["message"]["content"]
-                            if content and len(content.strip()) > 50:
-                                print(f"[GEMINI] Success using model {model_slug}!", flush=True)
-                                return content
-                    else:
-                        error_body = await resp.text()
-                        print(f"[GEMINI] Model {model_slug} status ({resp.status}): {error_body}", flush=True)
-            except Exception as e:
-                print(f"[GEMINI] Exception requesting completion from {model_slug}: {e}", flush=True)
-
-        # 2. Secondary Provider: Groq Cloud Fallback
-        if GROQ_API_KEY:
-            groq_models = ["llama-3.3-70b-versatile", "gemma-2-9b-it"]
-            groq_url = "https://api.groq.com/openai/v1/chat/completions"
-            groq_headers = {
-                "Authorization": f"Bearer {GROQ_API_KEY}",
-                "Content-Type": "application/json"
-            }
-
-            for model_slug in groq_models:
+            for model_slug in ("gemini-3.8-flash", "gemini-3.5-flash-lite"):
                 payload = {
                     "model": model_slug,
                     "messages": [{"role": "user", "content": coach_prompt}],
-                    "max_tokens": 2500
+                    "max_tokens": 2500,
+                }
+                try:
+                    print(f"[GEMINI] Requesting completion with model: {model_slug}...", flush=True)
+                    async with session.post(google_url, headers=google_headers, json=payload) as resp:
+                        if resp.status == 200:
+                            result = await resp.json()
+                            choices = result.get("choices", [])
+                            if choices:
+                                content = choices[0].get("message", {}).get("content")
+                                if content and len(content.strip()) > 50:
+                                    return content
+                        else:
+                            error_body = (await resp.text())[:500]
+                            print(f"[GEMINI] Model {model_slug} status ({resp.status}): {error_body}", flush=True)
+                except Exception as exc:
+                    print(f"[GEMINI] Request failed for {model_slug}: {exc}", flush=True)
+
+        if GROQ_API_KEY:
+            groq_url = "https://api.groq.com/openai/v1/chat/completions"
+            groq_headers = {
+                "Authorization": f"Bearer {GROQ_API_KEY}",
+                "Content-Type": "application/json",
+            }
+            for model_slug in ("openai/gpt-oss-120b",):
+                payload = {
+                    "model": model_slug,
+                    "messages": [{"role": "user", "content": coach_prompt}],
+                    "max_tokens": 2500,
                 }
                 try:
                     print(f"[GROQ FALLBACK] Requesting completion with model: {model_slug}...", flush=True)
@@ -198,121 +368,164 @@ async def generate_ai_coaching_debrief(match_data: dict) -> str:
                         if resp.status == 200:
                             result = await resp.json()
                             choices = result.get("choices", [])
-                            if choices and len(choices) > 0:
-                                content = choices[0]["message"]["content"]
+                            if choices:
+                                content = choices[0].get("message", {}).get("content")
                                 if content and len(content.strip()) > 50:
-                                    print(f"[GROQ FALLBACK] Success using Groq {model_slug}!", flush=True)
                                     return content
                         else:
-                            error_body = await resp.text()
+                            error_body = (await resp.text())[:500]
                             print(f"[GROQ FALLBACK] Model {model_slug} status ({resp.status}): {error_body}", flush=True)
-                except Exception as e:
-                    print(f"[GROQ FALLBACK] Exception requesting completion from {model_slug}: {e}", flush=True)
+                except Exception as exc:
+                    print(f"[GROQ FALLBACK] Request failed for {model_slug}: {exc}", flush=True)
 
+    if not LLM_API_KEY and not GROQ_API_KEY:
+        print("[AI] No LLM_API_KEY or GROQ_API_KEY is configured.", flush=True)
     return None
 
+
 def chunk_debrief(text: str, max_len: int = 3800) -> list:
-    """Splits long debriefs along double-newlines or headers to prevent Discord Embed cut-offs."""
+    """Split text into chunks that stay below Discord's embed description limit."""
     if not text:
         return []
-    if len(text) <= max_len:
-        return [text]
-    
+
     chunks = []
-    current_chunk = ""
-    sections = text.split("\n\n")
-    
-    for sec in sections:
-        if len(current_chunk) + len(sec) + 2 > max_len:
-            if current_chunk.strip():
-                chunks.append(current_chunk.strip())
-            current_chunk = sec + "\n\n"
-        else:
-            current_chunk += sec + "\n\n"
-            
-    if current_chunk.strip():
-        chunks.append(current_chunk.strip())
-        
+    current = ""
+    for paragraph in text.split("\n\n"):
+        pieces = []
+        remaining = paragraph
+        while len(remaining) > max_len:
+            split_at = max(remaining.rfind("\n", 0, max_len), remaining.rfind(" ", 0, max_len))
+            if split_at < max_len // 2:
+                split_at = max_len
+            pieces.append(remaining[:split_at].rstrip())
+            remaining = remaining[split_at:].lstrip()
+        pieces.append(remaining)
+
+        for piece in pieces:
+            addition = piece if not current else "\n\n" + piece
+            if len(current) + len(addition) > max_len:
+                if current:
+                    chunks.append(current)
+                current = piece
+            else:
+                current += addition
+    if current:
+        chunks.append(current)
     return chunks
+
 
 @tasks.loop(minutes=3)
 async def check_recent_matches():
-    global LAST_PROCESSED_MATCH
     if not TRACKED_STEAM_IDS:
         return
+    timeout = aiohttp.ClientTimeout(total=30)
 
-    steam_id = TRACKED_STEAM_IDS[0]
-    url = f"https://api.opendota.com/api/players/{steam_id}/recentMatches"
-    
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as resp:
-                if resp.status == 200:
-                    recent = await resp.json()
-                    if recent:
-                        latest_match_id = recent[0]["match_id"]
-                        
-                        if LAST_PROCESSED_MATCH is None:
-                            LAST_PROCESSED_MATCH = latest_match_id
-                            print(f"[POLL] Initialized baseline match ID: {latest_match_id}. Polling active...", flush=True)
-                            return
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            for account_id in TRACKED_STEAM_IDS:
+                await discover_unseen_matches(session, account_id)
 
-                        print(f"[POLL] Polling check: Latest={latest_match_id} | Cached={LAST_PROCESSED_MATCH}", flush=True)
-                        
-                        if latest_match_id != LAST_PROCESSED_MATCH:
-                            print(f"[MATCH] Target match detected: {latest_match_id}", flush=True)
-                            
-                            channel = bot.get_channel(CHANNEL_ID)
-                            if channel:
-                                parse_req = await session.post(f"https://api.opendota.com/api/request/{latest_match_id}")
-                                print(f"[OPENDOTA] Parse request status: {parse_req.status}", flush=True)
-                                await asyncio.sleep(10)
-                                
-                                match_data = await fetch_opendota_match(latest_match_id)
-                                if match_data:
-                                    debrief_text = await generate_ai_coaching_debrief(match_data)
-                                    
-                                    if not debrief_text:
-                                        print(f"[RETRY] All AI endpoints busy. Will retry match {latest_match_id} in next cycle.", flush=True)
-                                        return
-                                    
-                                    LAST_PROCESSED_MATCH = latest_match_id
-                                    
-                                    text_parts = chunk_debrief(debrief_text)
-                                    total_parts = len(text_parts)
+            if not MATCH_STATE["pending"]:
+                return
 
-                                    for idx, part in enumerate(text_parts, 1):
-                                        title_str = f"🧠 Draft & Item Counter AI Debrief — Match {latest_match_id}"
-                                        if total_parts > 1:
-                                            title_str += f" (Part {idx}/{total_parts})"
+            now = time.time()
+            eligible = [
+                item for item in MATCH_STATE["pending"]
+                if float(item.get("next_attempt_at", 0)) <= now
+            ]
+            if not eligible:
+                return
 
-                                        embed = discord.Embed(
-                                            title=title_str,
-                                            description=part,
-                                            color=discord.Color.purple()
-                                        )
-                                        embed.set_footer(text=f"OpenDota Telemetry Engine | AI Debrief (Part {idx} of {total_parts})")
-                                        await channel.send(embed=embed)
-                            else:
-                                print(f"[DISCORD] Could not access channel ID: {CHANNEL_ID}", flush=True)
-                elif resp.status == 429:
-                    print("[POLL] OpenDota API rate limited (429). Retrying next cycle.", flush=True)
-                else:
-                    print(f"[POLL] OpenDota API return code: {resp.status}", flush=True)
-    except Exception as e:
-        print(f"[POLL ERROR] Exception during match polling: {e}", flush=True)
+            # Match IDs are chronological; process the oldest eligible match first.
+            pending = min(eligible, key=lambda item: int(item["match_id"]))
+            account_id = int(pending["account_id"])
+            match_id = int(pending["match_id"])
+            print(f"[QUEUE] Processing match {match_id} for account {account_id}.", flush=True)
+
+            channel = bot.get_channel(CHANNEL_ID)
+            if channel is None:
+                try:
+                    channel = await bot.fetch_channel(CHANNEL_ID)
+                except discord.DiscordException as exc:
+                    print(f"[DISCORD] Could not access channel {CHANNEL_ID}: {exc}", flush=True)
+                    defer_pending_match(account_id, match_id, "Discord channel unavailable")
+                    return
+
+            match_data = await fetch_parsed_match(session, match_id)
+            if not match_data:
+                print(f"[RETRY] Match {match_id} is not ready; will retry next cycle.", flush=True)
+                defer_pending_match(account_id, match_id, "OpenDota match data unavailable")
+                return
+
+            debrief_text = await generate_ai_coaching_debrief(match_data)
+            if not debrief_text:
+                print(f"[RETRY] AI providers failed for match {match_id}; will retry next cycle.", flush=True)
+                defer_pending_match(account_id, match_id, "AI providers unavailable")
+                return
+
+            text_parts = chunk_debrief(debrief_text)
+            total_parts = len(text_parts)
+            for idx, part in enumerate(text_parts, 1):
+                title = f"🧠 Dota 2 AI Debrief — Match {match_id}"
+                if total_parts > 1:
+                    title += f" (Part {idx}/{total_parts})"
+                embed = discord.Embed(
+                    title=title,
+                    description=part,
+                    color=discord.Color.purple(),
+                )
+                embed.set_footer(text=f"OpenDota Telemetry Engine | Part {idx} of {total_parts}")
+                await channel.send(embed=embed)
+
+            # Remove only after every part was accepted by Discord. The queue is
+            # durable, so parse/provider/send failures leave the match for retry.
+            MATCH_STATE["pending"] = [
+                item for item in MATCH_STATE["pending"]
+                if not (
+                    int(item["account_id"]) == account_id
+                    and int(item["match_id"]) == match_id
+                )
+            ]
+            MATCH_STATE["accounts"].setdefault(str(account_id), {})[
+                "last_processed_match"
+            ] = match_id
+            save_match_state()
+            print(f"[QUEUE] Successfully delivered match {match_id}.", flush=True)
+    except Exception as exc:
+        print(f"[POLL ERROR] Exception during match polling: {exc}", flush=True)
         traceback.print_exc()
+        if "account_id" in locals() and "match_id" in locals():
+            defer_pending_match(account_id, match_id, "unexpected processing error")
+
+
+class CoachingBot(commands.Bot):
+    async def setup_hook(self):
+        # setup_hook runs once per bot process, unlike on_ready which can recur.
+        await load_hero_constants()
+        try:
+            await start_web_server()
+        except OSError as exc:
+            print(f"[SERVER] Could not start health endpoint: {exc}", flush=True)
+
+
+bot = CoachingBot(command_prefix="!", intents=intents)
+
 
 @bot.event
 async def on_ready():
+    global MATCH_STATE, STATE_LOADED
     print(f"[BOT] Logged in as {bot.user} (ID: {bot.user.id})", flush=True)
-    await load_hero_constants()
-    await start_web_server()
+    if not STATE_LOADED:
+        MATCH_STATE = load_match_state()
+        STATE_LOADED = True
     if not check_recent_matches.is_running():
         check_recent_matches.start()
         print("[BOT] Match tracking loop started.", flush=True)
 
+
 if __name__ == "__main__":
     if not DISCORD_BOT_TOKEN:
         raise ValueError("DISCORD_BOT_TOKEN environment variable is missing!")
+    if not LLM_API_KEY and not GROQ_API_KEY:
+        print("[CONFIG] Neither LLM_API_KEY nor GROQ_API_KEY is set; AI reports will retry without posting.", flush=True)
     bot.run(DISCORD_BOT_TOKEN)
