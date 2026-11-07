@@ -20,12 +20,25 @@ CHANNEL_ID = 1567594143834702025
 TRACKED_STEAM_IDS = [243689827]  # OpenDota 32-bit account IDs
 STATE_FILE = Path(os.environ.get("LAST_PROCESSED_MATCH_FILE", "last_processed_match.json"))
 HISTORY_PAGE_SIZE = 100
+GAME_DATA_REFRESH_SECONDS = 6 * 60 * 60
+GAME_DATA_RETRY_SECONDS = 10 * 60
+RANKED_SAMPLE_CACHE_SECONDS = 6 * 60 * 60
+RANKED_SAMPLE_LIMIT = 100
 
 HERO_NAME_MAP = {}
 HERO_UNIT_NAME_MAP = {}
 HERO_ABILITY_MAP = {}
+HERO_ABILITY_DETAILS_MAP = {}
 ITEM_NAME_MAP = {}
 ITEM_KEY_NAME_MAP = {}
+ITEM_DETAILS_MAP = {}
+PATCH_NAME_MAP = {}
+CURRENT_PATCH_ID = None
+CURRENT_PATCH_NAME = None
+GAME_DATA_LAST_REFRESH = 0.0
+GAME_DATA_LAST_ATTEMPT = 0.0
+RANKED_HERO_SAMPLE_CACHE = {}
+RANKED_PERSONAL_SAMPLE_CACHE = {}
 MATCH_STATE = {"accounts": {}, "pending": []}
 STATE_LOADED = False
 WEB_RUNNER = None
@@ -196,10 +209,40 @@ async def discover_unseen_matches(session: aiohttp.ClientSession, account_id: in
     save_match_state()
 
 
-async def load_hero_constants():
-    global HERO_NAME_MAP, HERO_UNIT_NAME_MAP, HERO_ABILITY_MAP, ITEM_NAME_MAP, ITEM_KEY_NAME_MAP
+async def load_hero_constants(force: bool = False):
+    """Refresh OpenDota's game constants so reports use current patch data."""
+    global HERO_NAME_MAP, HERO_UNIT_NAME_MAP, HERO_ABILITY_MAP, HERO_ABILITY_DETAILS_MAP
+    global ITEM_NAME_MAP, ITEM_KEY_NAME_MAP, ITEM_DETAILS_MAP, PATCH_NAME_MAP
+    global CURRENT_PATCH_ID, CURRENT_PATCH_NAME, GAME_DATA_LAST_REFRESH, GAME_DATA_LAST_ATTEMPT
+    now = time.time()
+    if not force and now - GAME_DATA_LAST_REFRESH < GAME_DATA_REFRESH_SECONDS:
+        return
+    if not force and now - GAME_DATA_LAST_ATTEMPT < GAME_DATA_RETRY_SECONDS:
+        return
+    GAME_DATA_LAST_ATTEMPT = now
+
     timeout = aiohttp.ClientTimeout(total=20)
     async with aiohttp.ClientSession(timeout=timeout) as session:
+        refreshed_everything = True
+
+        try:
+            async with session.get("https://api.opendota.com/api/constants/patch") as resp:
+                if resp.status == 200:
+                    patches = await resp.json()
+                    PATCH_NAME_MAP = {int(p["id"]): p["name"] for p in patches if p.get("id") is not None}
+                    if PATCH_NAME_MAP:
+                        CURRENT_PATCH_ID = max(PATCH_NAME_MAP)
+                        CURRENT_PATCH_NAME = PATCH_NAME_MAP[CURRENT_PATCH_ID]
+                        print(f"[PATCH] Current OpenDota game-data patch: {CURRENT_PATCH_NAME} (id {CURRENT_PATCH_ID}).", flush=True)
+                    else:
+                        refreshed_everything = False
+                else:
+                    refreshed_everything = False
+                    print(f"[PATCH] Failed to fetch patch constants. Status: {resp.status}", flush=True)
+        except Exception as exc:
+            refreshed_everything = False
+            print(f"[PATCH] Exception loading patch constants: {exc}", flush=True)
+
         try:
             async with session.get("https://api.opendota.com/api/heroes") as resp:
                 if resp.status == 200:
@@ -208,8 +251,10 @@ async def load_hero_constants():
                     HERO_UNIT_NAME_MAP = {h["id"]: h["name"] for h in heroes}
                     print(f"[HEROES] Loaded {len(HERO_NAME_MAP)} hero constants.", flush=True)
                 else:
+                    refreshed_everything = False
                     print(f"[HEROES] Failed to fetch hero constants. Status: {resp.status}", flush=True)
         except Exception as exc:
+            refreshed_everything = False
             print(f"[HEROES] Exception loading hero constants: {exc}", flush=True)
 
         try:
@@ -225,10 +270,22 @@ async def load_hero_constants():
                         key: item.get("dname", key.replace("_", " ").title())
                         for key, item in items.items()
                     }
+                    ITEM_DETAILS_MAP = {
+                        key: {
+                            "name": item.get("dname", key.replace("_", " ").title()),
+                            "description": item.get("desc") or " ".join(
+                                ability.get("description", "") for ability in item.get("abilities", [])
+                                if ability.get("description")
+                            ),
+                        }
+                        for key, item in items.items()
+                    }
                     print(f"[ITEMS] Loaded {len(ITEM_NAME_MAP)} item names.", flush=True)
                 else:
+                    refreshed_everything = False
                     print(f"[ITEMS] Failed to fetch item constants. Status: {resp.status}", flush=True)
         except Exception as exc:
+            refreshed_everything = False
             print(f"[ITEMS] Exception loading item constants: {exc}", flush=True)
 
         try:
@@ -238,6 +295,7 @@ async def load_hero_constants():
                         hero_abilities = await hero_resp.json()
                         abilities = await ability_resp.json()
                         ability_map = {}
+                        ability_details_map = {}
                         for hero_id, unit_name in HERO_UNIT_NAME_MAP.items():
                             names = hero_abilities.get(unit_name, {}).get("abilities", [])
                             ability_map[HERO_NAME_MAP[hero_id]] = [
@@ -245,16 +303,143 @@ async def load_hero_constants():
                                 for name in names
                                 if name in abilities and abilities[name].get("dname")
                             ]
+                            ability_details_map[HERO_NAME_MAP[hero_id]] = [
+                                {
+                                    "name": abilities[name].get("dname", name),
+                                    "description": abilities[name].get("desc", ""),
+                                }
+                                for name in names
+                                if name in abilities and abilities[name].get("dname")
+                            ]
                         HERO_ABILITY_MAP = ability_map
+                        HERO_ABILITY_DETAILS_MAP = ability_details_map
                         print(f"[ABILITIES] Loaded current abilities for {len(HERO_ABILITY_MAP)} heroes.", flush=True)
                     else:
+                        refreshed_everything = False
                         print(
                             f"[ABILITIES] Could not load ability constants: "
                             f"hero HTTP {hero_resp.status}, abilities HTTP {ability_resp.status}",
                             flush=True,
                         )
         except Exception as exc:
+            refreshed_everything = False
             print(f"[ABILITIES] Exception loading ability constants: {exc}", flush=True)
+
+        if refreshed_everything:
+            GAME_DATA_LAST_REFRESH = time.time()
+            print(f"[CONSTANTS] Current hero, item, ability, and patch data refreshed.", flush=True)
+
+
+async def get_ranked_hero_sample(
+    session: aiohttp.ClientSession, hero_id: int, patch_id: Optional[int], account_id: Optional[int] = None
+) -> dict:
+    """Summarize recent public ranked matches for this hero and match patch."""
+    if patch_id is None:
+        return {"available": False, "reason": "The match patch is missing from OpenDota data."}
+
+    cache_key = (int(hero_id), int(patch_id))
+    cached = RANKED_HERO_SAMPLE_CACHE.get(cache_key)
+    if cached and time.time() - cached["fetched_at"] < RANKED_SAMPLE_CACHE_SECONDS:
+        sample = dict(cached["sample"])
+    else:
+        url = f"https://api.opendota.com/api/heroes/{hero_id}/matches"
+        try:
+            async with session.get(
+                url,
+                params={"limit": RANKED_SAMPLE_LIMIT, "patch": patch_id, "lobby_type": 7},
+            ) as resp:
+                if resp.status != 200:
+                    return {"available": False, "reason": f"OpenDota returned HTTP {resp.status}."}
+                matches = await resp.json()
+        except Exception as exc:
+            print(f"[RANKED] Could not fetch hero {hero_id} ranked sample: {exc}", flush=True)
+            return {"available": False, "reason": "OpenDota ranked hero sample is temporarily unavailable."}
+
+        valid_matches = [
+            match for match in matches
+            if isinstance(match, dict) and match.get("radiant") is not None
+            and match.get("radiant_win") is not None
+        ]
+        wins = sum(bool(match["radiant"]) == bool(match["radiant_win"]) for match in valid_matches)
+        average_fields = {}
+        for field in ("kills", "deaths", "assists", "duration"):
+            values = [match.get(field) for match in valid_matches if isinstance(match.get(field), (int, float))]
+            if values:
+                average_fields[field] = round(sum(values) / len(values), 1)
+        sample = {
+            "available": bool(valid_matches),
+            "sample_size": len(valid_matches),
+            "wins": wins,
+            "win_rate_pct": round(wins / len(valid_matches) * 100, 1) if valid_matches else None,
+            "averages": average_fields,
+            "scope": f"up to {RANKED_SAMPLE_LIMIT} recent public ranked matches for this hero in patch {PATCH_NAME_MAP.get(int(patch_id), patch_id)}",
+        }
+        RANKED_HERO_SAMPLE_CACHE[cache_key] = {
+            "fetched_at": time.time(),
+            "sample": {key: value for key, value in sample.items()},
+        }
+
+    if account_id is not None and sample.get("available"):
+        personal_cache_key = (int(account_id), int(hero_id), int(patch_id))
+        personal_cached = RANKED_PERSONAL_SAMPLE_CACHE.get(personal_cache_key)
+        if personal_cached and time.time() - personal_cached["fetched_at"] < RANKED_SAMPLE_CACHE_SECONDS:
+            sample["tracked_player_sample"] = dict(personal_cached["sample"])
+            return sample
+        try:
+            url = f"https://api.opendota.com/api/players/{account_id}/matches"
+            async with session.get(
+                url,
+                params={
+                    "limit": RANKED_SAMPLE_LIMIT,
+                    "hero_id": hero_id,
+                    "patch": patch_id,
+                    "lobby_type": 7,
+                },
+            ) as resp:
+                if resp.status == 200:
+                    personal_matches = await resp.json()
+                    personal_matches = [
+                        match for match in personal_matches
+                        if isinstance(match, dict) and match.get("radiant") is not None
+                        and match.get("radiant_win") is not None
+                    ]
+                    personal_wins = sum(
+                        bool(match["radiant"]) == bool(match["radiant_win"])
+                        for match in personal_matches
+                    )
+                    personal_sample = {
+                        "sample_size": len(personal_matches),
+                        "wins": personal_wins,
+                        "win_rate_pct": round(personal_wins / len(personal_matches) * 100, 1)
+                        if personal_matches else None,
+                    }
+                    RANKED_PERSONAL_SAMPLE_CACHE[personal_cache_key] = {
+                        "fetched_at": time.time(),
+                        "sample": personal_sample,
+                    }
+                    sample["tracked_player_sample"] = personal_sample
+        except Exception as exc:
+            print(f"[RANKED] Could not fetch tracked player's hero sample: {exc}", flush=True)
+    return sample
+
+
+async def add_ranked_context(session: aiohttp.ClientSession, match_data: dict, account_id: int) -> None:
+    """Attach same-patch ranked aggregates for each tracked hero in this match."""
+    patch_id = match_data.get("patch")
+    context = {}
+    for player in match_data.get("players", []):
+        if player.get("account_id") not in TRACKED_STEAM_IDS:
+            continue
+        hero_id = player.get("hero_id")
+        if hero_id is None:
+            continue
+        context[str(hero_id)] = await get_ranked_hero_sample(
+            session,
+            int(hero_id),
+            int(patch_id) if patch_id is not None else None,
+            account_id=int(player.get("account_id") or account_id),
+        )
+    match_data["_ranked_hero_samples"] = context
 
 
 async def fetch_opendota_match(session: aiohttp.ClientSession, match_id: int):
@@ -341,6 +526,7 @@ def extract_match_telemetry(match_data: dict):
             if player.get(f"item_{slot}", 0)
         ]
         player_summary = {
+            "hero_id": hero_id,
             "hero": hero_name,
             "team": team,
             "lane": lane_roles.get(player.get("lane_role"), "Unknown"),
@@ -357,6 +543,8 @@ def extract_match_telemetry(match_data: dict):
             "final_items": final_items,
             "key_item_timings": item_timings,
             "current_abilities": HERO_ABILITY_MAP.get(hero_name, []),
+            "current_ability_details": HERO_ABILITY_DETAILS_MAP.get(hero_name, []),
+            "ranked_hero_sample": (match_data.get("_ranked_hero_samples") or {}).get(str(hero_id)),
         }
         all_players.append(player_summary)
         if player.get("account_id") in TRACKED_STEAM_IDS:
@@ -387,9 +575,13 @@ def build_verified_match_facts(match_data: dict) -> str:
     radiant, dire, tracked_players, all_players = extract_match_telemetry(match_data)
     duration = (match_data.get("duration") or 0) // 60
     winner = "Radiant" if match_data.get("radiant_win") else "Dire"
+    match_patch_id = match_data.get("patch")
+    match_patch = PATCH_NAME_MAP.get(int(match_patch_id), f"OpenDota patch id {match_patch_id}") if match_patch_id is not None else "unavailable"
+    current_patch = CURRENT_PATCH_NAME or "unavailable"
     lines = [
         "📊 **VERIFIED OPENDOTA FACTS — NOT AI INTERPRETATION**",
         f"- Result: {winner} won {match_data.get('radiant_score')}-{match_data.get('dire_score')} in {duration} minutes.",
+        f"- Match patch: {match_patch}. Current hero/item/ability reference data: patch {current_patch} (OpenDota constants, refreshed periodically).",
         f"- Radiant roster: {', '.join(radiant)}.",
         f"- Dire roster: {', '.join(dire)}.",
     ]
@@ -433,8 +625,56 @@ def build_verified_match_facts(match_data: dict) -> str:
 
     if tracked_players and all(player.get("cs_at_10") is None for player in tracked_players):
         lines.append("- CS@10: unavailable in the OpenDota match response for the tracked player.")
+    for player in tracked_players:
+        sample = player.get("ranked_hero_sample") or {}
+        if sample.get("available"):
+            averages = sample.get("averages", {})
+            avg_text = ", ".join(
+                f"avg {field} {averages[field]}" for field in ("kills", "deaths", "assists")
+                if field in averages
+            )
+            lines.append(
+                f"- Same-hero ranked baseline for {player['hero']}: {sample['sample_size']} recent public ranked matches "
+                f"in {PATCH_NAME_MAP.get(int(match_patch_id), match_patch)}; {sample['wins']} wins "
+                f"({sample['win_rate_pct']}%); {avg_text or 'K/D/A averages unavailable'}. "
+                "This is a hero-level sample, not matched to the player's rank or lane."
+            )
+            personal = sample.get("tracked_player_sample")
+            if personal is not None:
+                if personal.get("sample_size"):
+                    lines.append(
+                        f"- Tracked player's public same-hero ranked matches found in this patch: "
+                        f"{personal['sample_size']}; {personal['wins']} wins ({personal['win_rate_pct']}%)."
+                    )
+                else:
+                    lines.append(
+                        "- No public tracked-player ranked matches for this hero were returned for this patch; "
+                        "this does not establish that none were played."
+                    )
+        else:
+            lines.append(
+                f"- Same-patch ranked hero baseline for {player['hero']}: unavailable"
+                + (f" ({sample.get('reason')})" if sample.get("reason") else ".")
+            )
     lines.append("AI coaching text follows; it contains interpretations, not verified match facts.")
     return "\n".join(lines)
+
+
+def build_current_item_catalog() -> dict:
+    """Return current patch descriptions for a compact set of coaching items."""
+    item_keys = (
+        "black_king_bar", "linkens_sphere", "lotus_orb", "ghost", "glimmer_cape",
+        "force_staff", "hurricane_pike", "aeon_disk", "pipe", "crimson_guard",
+        "heavens_halberd", "orchid", "bloodthorn", "scythe_of_vyse", "shivas_guard",
+        "nullifier", "spirit_vessel", "rod_of_atos", "cyclone", "manta",
+    )
+    catalog = {}
+    for key in item_keys:
+        details = ITEM_DETAILS_MAP.get(key) or {}
+        description = " ".join((details.get("description") or "").split())
+        if details.get("name") and description:
+            catalog[details["name"]] = description[:450]
+    return catalog
 
 
 async def generate_ai_coaching_debrief(match_data: dict) -> Optional[str]:
@@ -442,16 +682,30 @@ async def generate_ai_coaching_debrief(match_data: dict) -> Optional[str]:
     team_by_hero = {player["hero"]: player["team"] for player in all_players}
     duration_mins = match_data.get("duration", 0) // 60
     winner = "Radiant" if match_data.get("radiant_win") else "Dire"
+    current_item_catalog = build_current_item_catalog()
+    match_patch_id = match_data.get("patch")
+    match_patch_name = (
+        PATCH_NAME_MAP.get(int(match_patch_id), f"OpenDota patch id {match_patch_id}")
+        if match_patch_id is not None else "unavailable"
+    )
 
     coach_prompt = (
         "You are a concise, evidence-led Dota 2 coach. Analyze the actual match data below. "
         "Use hero mechanics only when you are confident they are current. Never invent spell usage, "
         "lane events, or purchases. Say plainly when a field is unavailable.\n\n"
+        f"The match was played on patch {match_patch_name}. Your current-mechanics reference is OpenDota's "
+        f"latest constants for patch {CURRENT_PATCH_NAME or 'unavailable'}; use those current abilities and the "
+        "item catalog below for current recommendations. Do not claim that current mechanics describe an older "
+        "match patch if the two patch versions differ.\n"
         "A separate verified-facts panel is printed from the API response. Do not restate or recalculate "
-        "scores, gold samples, player statistics, item inventories, or purchase times. Do not infer that "
+        "scores, gold samples, all-player statistics, item inventories, or purchase times. In the tracked-player "
+        "section only, you may cite the tracked player's K/D/A and the ranked sample averages/win rate needed "
+        "to explain the comparison. Do not infer that "
         "an item caused a win, loss, gank, or teamfight unless the supplied data records that event.\n"
-        "The current ability list in each player's telemetry is authoritative. Do not name abilities "
-        "that are absent from it, and do not invent Aghanim's Scepter/Shard upgrade effects.\n"
+        "The current ability names and descriptions in each player's telemetry are authoritative. "
+        "The current item catalog descriptions are authoritative. Do not name abilities absent from the roster "
+        "data, invent item effects, or invent Aghanim's Scepter/Shard upgrade effects. If a recommendation "
+        "cannot be supported by these current descriptions, say you are uncertain.\n"
         "TEAM ASSIGNMENTS ARE AUTHORITATIVE. Never place a hero on the other team. "
         "Only describe cross-team matchups between these rosters.\n"
         f"RADIANT ROSTER: {', '.join(radiant_lineup)}\n"
@@ -461,10 +715,11 @@ async def generate_ai_coaching_debrief(match_data: dict) -> Optional[str]:
         f"- Dire lineup: {', '.join(dire_lineup)}\n"
         f"- All player telemetry (final named items and key purchase timings included): {json.dumps(all_players, indent=2)}\n"
         f"- Tracked player telemetry: {json.dumps(tracked_players, indent=2)}\n\n"
+        f"- Current patch item catalog (item name: current effect): {json.dumps(current_item_catalog, ensure_ascii=False)}\n\n"
         "Structure your response with these sections:\n"
         "🎯 **1. DRAFT MATCHUP** — Give one likely win condition per team as a hypothesis. Do not claim this is what actually happened in-game.\n"
         "🛡️ **2. COUNTER ITEMS** — Give up to 2 specific recommendations with buyer hero, enemy target, and a current, accurate reason. Never invent an ability or Aghanim's upgrade.\n"
-        "⚔️ **3. TRACKED PLAYER** — Give one coaching strength and one improvement area grounded in the telemetry. Do not repeat numbers from the verified facts panel.\n"
+        "⚔️ **3. TRACKED PLAYER** — Use the same-hero, same-patch ranked sample in the verified facts to compare the tracked match's K/D/A with the sample averages and win rate. State the sample size and that it is not rank- or lane-matched. Explain one useful lesson from the comparison without treating one match as proof of skill. If the sample is unavailable, say so and teach from this match's supported telemetry only. Do not contradict the verified panel.\n"
         "🎒 **4. BUILD REVIEW** — Give one itemization lesson based on the recorded final inventory. Do not repeat purchase times or claim an item caused a specific fight or win.\n"
         "🗺️ **5. NEXT MATCH DRILL** — Give one measurable practice goal tied to a supported coaching point, not an unobserved event.\n"
     )
@@ -584,6 +839,7 @@ def chunk_debrief(text: str, max_len: int = 3800) -> list:
 async def check_recent_matches():
     if not TRACKED_STEAM_IDS:
         return
+    await load_hero_constants()
     timeout = aiohttp.ClientTimeout(total=30)
 
     try:
@@ -622,6 +878,8 @@ async def check_recent_matches():
                 print(f"[RETRY] Match {match_id} is not ready; will retry next cycle.", flush=True)
                 defer_pending_match(account_id, match_id, "OpenDota match data unavailable")
                 return
+
+            await add_ranked_context(session, match_data, account_id)
 
             debrief_text = await generate_ai_coaching_debrief(match_data)
             if not debrief_text:
