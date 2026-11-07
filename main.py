@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import re
 import time
 import traceback
 from pathlib import Path
@@ -21,6 +22,8 @@ STATE_FILE = Path(os.environ.get("LAST_PROCESSED_MATCH_FILE", "last_processed_ma
 HISTORY_PAGE_SIZE = 100
 
 HERO_NAME_MAP = {}
+HERO_UNIT_NAME_MAP = {}
+HERO_ABILITY_MAP = {}
 ITEM_NAME_MAP = {}
 ITEM_KEY_NAME_MAP = {}
 MATCH_STATE = {"accounts": {}, "pending": []}
@@ -194,7 +197,7 @@ async def discover_unseen_matches(session: aiohttp.ClientSession, account_id: in
 
 
 async def load_hero_constants():
-    global HERO_NAME_MAP, ITEM_NAME_MAP, ITEM_KEY_NAME_MAP
+    global HERO_NAME_MAP, HERO_UNIT_NAME_MAP, HERO_ABILITY_MAP, ITEM_NAME_MAP, ITEM_KEY_NAME_MAP
     timeout = aiohttp.ClientTimeout(total=20)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         try:
@@ -202,6 +205,7 @@ async def load_hero_constants():
                 if resp.status == 200:
                     heroes = await resp.json()
                     HERO_NAME_MAP = {h["id"]: h["localized_name"] for h in heroes}
+                    HERO_UNIT_NAME_MAP = {h["id"]: h["name"] for h in heroes}
                     print(f"[HEROES] Loaded {len(HERO_NAME_MAP)} hero constants.", flush=True)
                 else:
                     print(f"[HEROES] Failed to fetch hero constants. Status: {resp.status}", flush=True)
@@ -226,6 +230,31 @@ async def load_hero_constants():
                     print(f"[ITEMS] Failed to fetch item constants. Status: {resp.status}", flush=True)
         except Exception as exc:
             print(f"[ITEMS] Exception loading item constants: {exc}", flush=True)
+
+        try:
+            async with session.get("https://api.opendota.com/api/constants/hero_abilities") as hero_resp:
+                async with session.get("https://api.opendota.com/api/constants/abilities") as ability_resp:
+                    if hero_resp.status == 200 and ability_resp.status == 200:
+                        hero_abilities = await hero_resp.json()
+                        abilities = await ability_resp.json()
+                        ability_map = {}
+                        for hero_id, unit_name in HERO_UNIT_NAME_MAP.items():
+                            names = hero_abilities.get(unit_name, {}).get("abilities", [])
+                            ability_map[HERO_NAME_MAP[hero_id]] = [
+                                abilities[name].get("dname", name)
+                                for name in names
+                                if name in abilities and abilities[name].get("dname")
+                            ]
+                        HERO_ABILITY_MAP = ability_map
+                        print(f"[ABILITIES] Loaded current abilities for {len(HERO_ABILITY_MAP)} heroes.", flush=True)
+                    else:
+                        print(
+                            f"[ABILITIES] Could not load ability constants: "
+                            f"hero HTTP {hero_resp.status}, abilities HTTP {ability_resp.status}",
+                            flush=True,
+                        )
+        except Exception as exc:
+            print(f"[ABILITIES] Exception loading ability constants: {exc}", flush=True)
 
 
 async def fetch_opendota_match(session: aiohttp.ClientSession, match_id: int):
@@ -327,6 +356,7 @@ def extract_match_telemetry(match_data: dict):
             "tower_damage": player.get("tower_damage"),
             "final_items": final_items,
             "key_item_timings": item_timings,
+            "current_abilities": HERO_ABILITY_MAP.get(hero_name, []),
         }
         all_players.append(player_summary)
         if player.get("account_id") in TRACKED_STEAM_IDS:
@@ -335,8 +365,26 @@ def extract_match_telemetry(match_data: dict):
     return radiant_heroes, dire_heroes, detailed_tracked_players, all_players
 
 
+def find_team_label_errors(content: str, team_by_hero: dict) -> list:
+    """Detect explicit hero/team labels that contradict OpenDota's player slots."""
+    errors = []
+    for hero, actual_team in team_by_hero.items():
+        wrong_team = "Dire" if actual_team == "Radiant" else "Radiant"
+        escaped_hero = re.escape(hero)
+        patterns = (
+            rf"\b{escaped_hero}\s*\(\s*{wrong_team}\s*\)",
+            rf"\b{wrong_team}\s+{escaped_hero}\b",
+            rf"\b{wrong_team}[’']s\s+{escaped_hero}\b",
+            rf"\b{escaped_hero}\s+(?:is|was|plays|played)\s+(?:on|for|with)\s+{wrong_team}\b",
+        )
+        if any(re.search(pattern, content, flags=re.IGNORECASE) for pattern in patterns):
+            errors.append(f"{hero} is {actual_team}, not {wrong_team}")
+    return errors
+
+
 async def generate_ai_coaching_debrief(match_data: dict) -> Optional[str]:
     radiant_lineup, dire_lineup, tracked_players, all_players = extract_match_telemetry(match_data)
+    team_by_hero = {player["hero"]: player["team"] for player in all_players}
     duration_mins = match_data.get("duration", 0) // 60
     winner = "Radiant" if match_data.get("radiant_win") else "Dire"
     gold_advantage = match_data.get("radiant_gold_adv") or []
@@ -350,6 +398,12 @@ async def generate_ai_coaching_debrief(match_data: dict) -> Optional[str]:
         "You are a concise, evidence-led Dota 2 coach. Analyze the actual match data below. "
         "Use hero mechanics only when you are confident they are current. Never invent spell usage, "
         "lane events, or purchases. Say plainly when a field is unavailable.\n\n"
+        "The current ability list in each player's telemetry is authoritative. Do not name abilities "
+        "that are absent from it, and do not invent Aghanim's Scepter/Shard upgrade effects.\n"
+        "TEAM ASSIGNMENTS ARE AUTHORITATIVE. Never place a hero on the other team. "
+        "Only describe cross-team matchups between these rosters.\n"
+        f"RADIANT ROSTER: {', '.join(radiant_lineup)}\n"
+        f"DIRE ROSTER: {', '.join(dire_lineup)}\n\n"
         f"MATCH METRICS:\n- Duration: {duration_mins} minutes | Winner: {winner}\n"
         f"- Score: Radiant {match_data.get('radiant_score')} — {match_data.get('dire_score')} Dire\n"
         f"- Radiant gold advantage samples: {json.dumps(gold_samples)}\n"
@@ -366,65 +420,92 @@ async def generate_ai_coaching_debrief(match_data: dict) -> Optional[str]:
     )
 
     timeout = aiohttp.ClientTimeout(total=45)
+    team_validation_failed = False
     async with aiohttp.ClientSession(timeout=timeout) as session:
+        providers = []
         if LLM_API_KEY:
-            google_url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-            google_headers = {
-                "Authorization": f"Bearer {LLM_API_KEY}",
-                "Content-Type": "application/json",
-            }
-            for model_slug in ("gemini-3.8-flash", "gemini-3.5-flash-lite"):
-                payload = {
-                    "model": model_slug,
-                    "messages": [{"role": "user", "content": coach_prompt}],
-                    "max_tokens": 2500,
-                }
-                try:
-                    print(f"[GEMINI] Requesting completion with model: {model_slug}...", flush=True)
-                    async with session.post(google_url, headers=google_headers, json=payload) as resp:
-                        if resp.status == 200:
-                            result = await resp.json()
-                            choices = result.get("choices", [])
-                            if choices:
-                                content = choices[0].get("message", {}).get("content")
-                                if content and len(content.strip()) > 50:
-                                    return content
-                        else:
-                            error_body = (await resp.text())[:500]
-                            print(f"[GEMINI] Model {model_slug} status ({resp.status}): {error_body}", flush=True)
-                except Exception as exc:
-                    print(f"[GEMINI] Request failed for {model_slug}: {exc}", flush=True)
-
+            providers.append((
+                "GEMINI",
+                "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+                {"Authorization": f"Bearer {LLM_API_KEY}", "Content-Type": "application/json"},
+                ("gemini-3.8-flash", "gemini-3.5-flash-lite"),
+            ))
         if GROQ_API_KEY:
-            groq_url = "https://api.groq.com/openai/v1/chat/completions"
-            groq_headers = {
-                "Authorization": f"Bearer {GROQ_API_KEY}",
-                "Content-Type": "application/json",
+            providers.append((
+                "GROQ",
+                "https://api.groq.com/openai/v1/chat/completions",
+                {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
+                ("openai/gpt-oss-120b",),
+            ))
+
+        async def request_completion(provider_name: str, url: str, headers: dict, model_slug: str, prompt: str):
+            payload = {
+                "model": model_slug,
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 2500,
             }
-            for model_slug in ("openai/gpt-oss-120b",):
-                payload = {
-                    "model": model_slug,
-                    "messages": [{"role": "user", "content": coach_prompt}],
-                    "max_tokens": 2500,
-                }
-                try:
-                    print(f"[GROQ FALLBACK] Requesting completion with model: {model_slug}...", flush=True)
-                    async with session.post(groq_url, headers=groq_headers, json=payload) as resp:
-                        if resp.status == 200:
-                            result = await resp.json()
-                            choices = result.get("choices", [])
-                            if choices:
-                                content = choices[0].get("message", {}).get("content")
-                                if content and len(content.strip()) > 50:
-                                    return content
-                        else:
-                            error_body = (await resp.text())[:500]
-                            print(f"[GROQ FALLBACK] Model {model_slug} status ({resp.status}): {error_body}", flush=True)
-                except Exception as exc:
-                    print(f"[GROQ FALLBACK] Request failed for {model_slug}: {exc}", flush=True)
+            try:
+                print(f"[{provider_name}] Requesting completion with model: {model_slug}...", flush=True)
+                async with session.post(url, headers=headers, json=payload) as resp:
+                    if resp.status == 200:
+                        result = await resp.json()
+                        choices = result.get("choices", [])
+                        if choices:
+                            content = choices[0].get("message", {}).get("content")
+                            if content and len(content.strip()) > 50:
+                                return content
+                    else:
+                        error_body = (await resp.text())[:500]
+                        print(f"[{provider_name}] Model {model_slug} status ({resp.status}): {error_body}", flush=True)
+            except Exception as exc:
+                print(f"[{provider_name}] Request failed for {model_slug}: {exc}", flush=True)
+            return None
+
+        for provider_name, url, headers, models in providers:
+            for model_slug in models:
+                content = await request_completion(provider_name, url, headers, model_slug, coach_prompt)
+                if not content:
+                    continue
+
+                errors = find_team_label_errors(content, team_by_hero)
+                if errors:
+                    correction_prompt = (
+                        f"{coach_prompt}\n\n"
+                        "Your previous draft assigned a hero to the wrong team. Rewrite the complete response "
+                        "using the verified rosters below, and make every matchup cross-team.\n"
+                        f"Verified Radiant: {', '.join(radiant_lineup)}\n"
+                        f"Verified Dire: {', '.join(dire_lineup)}\n"
+                        f"Detected error(s): {'; '.join(errors)}\n"
+                        f"Previous draft:\n{content}"
+                    )
+                    corrected = await request_completion(
+                        provider_name, url, headers, model_slug, correction_prompt
+                    )
+                    if corrected:
+                        content = corrected
+                        errors = find_team_label_errors(content, team_by_hero)
+                    if errors:
+                        team_validation_failed = True
+                        print(f"[{provider_name}] Team attribution failed validation: {'; '.join(errors)}", flush=True)
+                        continue
+
+                print(f"[{provider_name}] Generated a team-validated debrief with {model_slug}.", flush=True)
+                return content
 
     if not LLM_API_KEY and not GROQ_API_KEY:
         print("[AI] No LLM_API_KEY or GROQ_API_KEY is configured.", flush=True)
+    if team_validation_failed:
+        # Factual-only fallback: do not publish a known team-mislabeled draft.
+        tracked_facts = json.dumps(tracked_players, indent=2)
+        return (
+            "⚠️ AI coaching text was withheld because team assignments failed validation.\n\n"
+            f"Verified result: {winner} won {match_data.get('radiant_score')}-{match_data.get('dire_score')} "
+            f"in {duration_mins} minutes.\n"
+            f"Radiant roster: {', '.join(radiant_lineup)}.\n"
+            f"Dire roster: {', '.join(dire_lineup)}.\n"
+            f"Radiant gold advantage samples: {json.dumps(gold_samples)}.\n"
+            f"Tracked-player telemetry: {tracked_facts}"
+        )
     return None
 
 
