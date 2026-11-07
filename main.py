@@ -796,28 +796,70 @@ def build_verified_match_facts(match_data: dict) -> str:
     match_patch = PATCH_NAME_MAP.get(int(match_patch_id), f"OpenDota patch id {match_patch_id}") if match_patch_id is not None else "unavailable"
     current_patch = CURRENT_PATCH_NAME or "unavailable"
     lines = [
-        "📊 **VERIFIED OPENDOTA FACTS — NOT AI INTERPRETATION**",
-        f"- Result: {winner} won {match_data.get('radiant_score')}-{match_data.get('dire_score')} in {duration} minutes.",
-        f"- Match patch: {match_patch}. Current hero/item/ability reference data: patch {current_patch} (OpenDota constants, refreshed periodically).",
-        f"- Radiant roster: {', '.join(radiant)}.",
-        f"- Dire roster: {', '.join(dire)}.",
+        "✨ **MATCH HIGHLIGHTS**",
+        f"- **Result:** {winner} **{match_data.get('radiant_score')}-{match_data.get('dire_score')}** in **{duration} min**.",
     ]
 
     teamfight_summary = summarize_teamfights(match_data)
+    if tracked_players and teamfight_summary.get("full_5v5_count"):
+        tracked_team = tracked_players[0]["team"]
+        team_stats = teamfight_summary["teams"][tracked_team]
+        enemy_team = "Dire" if tracked_team == "Radiant" else "Radiant"
+        enemy_stats = teamfight_summary["teams"][enemy_team]
+        lines.append(
+            f"- **Team 5v5s:** {tracked_team} **{team_stats['wins']}W–{team_stats['losses']}L** "
+            f"by death differential across **{teamfight_summary['full_5v5_count']} full fights**; "
+            f"team damage {team_stats['damage']:,} vs {enemy_stats['damage']:,}."
+        )
+    elif not teamfight_summary.get("available"):
+        lines.append("- **Team 5v5s:** OpenDota teamfight data unavailable.")
+
+    for player in tracked_players:
+        sample = player.get("ranked_hero_sample") or {}
+        if not sample.get("available"):
+            continue
+        role_sample = sample.get("by_lane_role", {}).get(player.get("lane"))
+        comparison = role_sample or sample
+        averages = comparison.get("averages", {})
+        hero_highlights = []
+        for field, label, current_value in (
+            ("gold_per_min", "GPM", player.get("gpm")),
+            ("xp_per_min", "XPM", player.get("xpm")),
+        ):
+            baseline_value = averages.get(field)
+            if isinstance(current_value, (int, float)) and isinstance(baseline_value, (int, float)):
+                hero_highlights.append(f"**{label} {current_value} vs {baseline_value} avg**")
+        if hero_highlights:
+            baseline_scope = "same-role" if role_sample else "all-role"
+            lines.append(
+                f"- **{player['hero']} vs public ranked {baseline_scope} sample:** "
+                f"{'; '.join(hero_highlights)} (**n={comparison['sample_size']}**; same patch)."
+            )
+        break
+
+    lines.extend([
+        "",
+        "📊 **VERIFIED OPENDOTA FACTS — NOT AI INTERPRETATION**",
+        f"- **Result:** {winner} won **{match_data.get('radiant_score')}-{match_data.get('dire_score')}** in {duration} minutes.",
+        f"- Match patch: **{match_patch}**. Current hero/item/ability reference data: **patch {current_patch}** (OpenDota constants, refreshed periodically).",
+        f"- Radiant roster: {', '.join(radiant)}.",
+        f"- Dire roster: {', '.join(dire)}.",
+    ])
+
     if not teamfight_summary.get("available"):
-        lines.append("- 5v5 teamfight review: unavailable because OpenDota supplied no usable teamfight events.")
+        lines.append("- **5v5 teamfight review:** unavailable because OpenDota supplied no usable teamfight events.")
     elif teamfight_summary.get("full_5v5_count"):
         full_count = teamfight_summary["full_5v5_count"]
         lines.append(
-            f"- Teamfight sample: {teamfight_summary['recorded_engagements']} recorded engagements; "
-            f"{full_count} had activity from all 10 players. Full 5v5 result is counted by fewer deaths in each event."
+            f"- **Teamfight sample:** {teamfight_summary['recorded_engagements']} recorded engagements; "
+            f"**{full_count}** had activity from all 10 players. Full 5v5 result is counted by fewer deaths in each event."
         )
         for team in ("Radiant", "Dire"):
             totals = teamfight_summary["teams"][team]
             lines.append(
-                f"  - {team} in those 5v5s: {totals['wins']} wins, {totals['losses']} losses, {totals['ties']} ties; "
+                f"  - **{team}: {totals['wins']} wins, {totals['losses']} losses, {totals['ties']} ties; "
                 f"hero kills {totals['kills']}, deaths {totals['deaths']}, damage {totals['damage']:,}, "
-                f"healing {totals['healing']:,}, buybacks {totals['buybacks']}."
+                f"healing {totals['healing']:,}, buybacks {totals['buybacks']}.**"
             )
             leaders = teamfight_summary.get("leaders", {}).get(team, {})
             top_damage = ", ".join(
@@ -826,13 +868,13 @@ def build_verified_match_facts(match_data: dict) -> str:
             most_deaths = ", ".join(
                 f"{row['hero']} {row['deaths']}" for row in leaders.get("most_deaths", [])
             ) or "unavailable"
-            lines.append(f"    Top recorded damage: {top_damage}; most recorded deaths: {most_deaths}.")
+            lines.append(f"    Top recorded damage: **{top_damage}**; most recorded deaths: **{most_deaths}**.")
         tracked_fight_rows = [row for row in teamfight_summary.get("players", []) if row.get("tracked_player")]
         for row in tracked_fight_rows:
             ability_uses = ", ".join(f"{name} {count}" for name, count in row["ability_uses"].items()) or "none recorded"
             item_uses = ", ".join(f"{name} {count}" for name, count in row["item_uses"].items()) or "none recorded"
             lines.append(
-                f"- Tracked player {row['hero']} in full 5v5s: active in {row['fights_active']}/{full_count}; "
+                f"- **Tracked player {row['hero']} in full 5v5s:** active in **{row['fights_active']}/{full_count}**; "
                 f"damage {row['damage']:,}; deaths {row['deaths']}; recorded ability uses: {ability_uses}; "
                 f"recorded item uses: {item_uses}."
             )
@@ -855,14 +897,18 @@ def build_verified_match_facts(match_data: dict) -> str:
                 leader, amount = "Dire", abs(advantage)
             else:
                 leader, amount = "even", 0
-            samples.append(f"{minute}m: {leader} +{amount:,}")
+            samples.append(f"**{minute}m {leader} +{amount:,}**")
         if samples:
-            lines.append("- Gold lead samples: " + "; ".join(samples) + ".")
+            lines.append("- **Gold lead samples:** " + "; ".join(samples) + ".")
 
     tracked_names = {player["hero"] for player in tracked_players}
     lines.append("- Player stats, final inventories, and recorded key-item purchase times:")
     for player in all_players:
-        tracked_label = " **(tracked player)**" if player["hero"] in tracked_names else ""
+        is_tracked = player["hero"] in tracked_names
+        player_label = (
+            f"**{player['team']} {player['hero']} (TRACKED PLAYER)**"
+            if is_tracked else f"{player['team']} {player['hero']}"
+        )
         percentile = (
             f", GPM percentile {player['gpm_percentile']}%"
             if player.get("gpm_percentile") is not None else ""
@@ -871,11 +917,14 @@ def build_verified_match_facts(match_data: dict) -> str:
         timings = player.get("key_item_timings") or {}
         timing_text = ", ".join(f"{item} {time}" for item, time in timings.items()) or "none in tracked timing list"
         line = (
-            f"  - {player['team']} {player['hero']} ({player['lane']}): "
-            f"KDA {player['kda']}; LH {player.get('last_hits')}; denies {player.get('denies')}; "
-            f"GPM {player.get('gpm')}{percentile}; XPM {player.get('xpm')}; "
+            f"  - {player_label} ({player['lane']}): "
+            f"KDA {'**' if is_tracked else ''}{player['kda']}{'**' if is_tracked else ''}; "
+            f"LH {'**' if is_tracked else ''}{player.get('last_hits')}{'**' if is_tracked else ''}; "
+            f"denies {player.get('denies')}; "
+            f"GPM {'**' if is_tracked else ''}{player.get('gpm')}{'**' if is_tracked else ''}{percentile}; "
+            f"XPM {'**' if is_tracked else ''}{player.get('xpm')}{'**' if is_tracked else ''}; "
             f"hero damage {player.get('hero_damage')}; tower damage {player.get('tower_damage')}; "
-            f"final items: {items}; key timings: {timing_text}.{tracked_label}"
+            f"final items: {items}; key timings: {'**' if is_tracked else ''}{timing_text}{'**' if is_tracked else ''}."
         )
         lines.append(line)
 
@@ -909,9 +958,9 @@ def build_verified_match_facts(match_data: dict) -> str:
                 for item in sample.get("common_final_items", [])
             ) or "item frequency unavailable"
             lines.append(
-                f"- Same-hero ranked baseline for {player['hero']}: {sample['sample_size']} recent public ranked matches "
+                f"- **Same-hero ranked baseline for {player['hero']}: {sample['sample_size']} recent public ranked matches "
                 f"in {PATCH_NAME_MAP.get(int(match_patch_id), match_patch)}; {sample['wins']} wins "
-                f"({sample['win_rate_pct']}%); {avg_text or 'parsed averages unavailable'}; "
+                f"({sample['win_rate_pct']}%).** {avg_text or 'parsed averages unavailable'}; "
                 f"rate-adjusted stats: {rate_text or 'unavailable'}. "
                 f"Lane roles: {lane_counts}. Common final inventories: {common_items}. "
                 "This is a public hero-level sample, not matched to the tracked player's rank."
@@ -955,8 +1004,8 @@ def build_verified_match_facts(match_data: dict) -> str:
                     )
             if comparisons:
                 lines.append(
-                    f"- Tracked match vs {baseline_label} for {player['hero']}: "
-                    + "; ".join(comparisons) + "."
+                    f"- **Tracked match vs {baseline_label} for {player['hero']}:** "
+                    + "; ".join(f"**{comparison}**" for comparison in comparisons) + "."
                 )
             if same_role:
                 role_averages = same_role.get("averages", {})
@@ -1018,6 +1067,7 @@ async def generate_ai_coaching_debrief(match_data: dict) -> Optional[str]:
         "You are a concise, evidence-led Dota 2 coach. Analyze the actual match data below. "
         "Use hero mechanics only when you are confident they are current. Never invent spell usage, "
         "lane events, or purchases. Say plainly when a field is unavailable.\n\n"
+        "FORMATTING: The verified panel starts with concise match highlights. In your coaching sections, use Discord Markdown bold selectively for the most important team insight, the tracked player's key comparison, the recommended improvement, and the practice drill. Do not bold whole paragraphs or every statistic.\n"
         f"The match was played on patch {match_patch_name}. Your current-mechanics reference is OpenDota's "
         f"latest constants for patch {CURRENT_PATCH_NAME or 'unavailable'}; use those current abilities and the "
         "item catalog below for current recommendations. Do not claim that current mechanics describe an older "
