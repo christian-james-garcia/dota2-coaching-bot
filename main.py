@@ -33,6 +33,7 @@ HERO_NAME_MAP = {}
 HERO_UNIT_NAME_MAP = {}
 HERO_ABILITY_MAP = {}
 HERO_ABILITY_DETAILS_MAP = {}
+ABILITY_NAME_MAP = {}
 ITEM_NAME_MAP = {}
 ITEM_KEY_NAME_MAP = {}
 ITEM_DETAILS_MAP = {}
@@ -214,7 +215,7 @@ async def discover_unseen_matches(session: aiohttp.ClientSession, account_id: in
 
 async def load_hero_constants(force: bool = False):
     """Refresh OpenDota's game constants so reports use current patch data."""
-    global HERO_NAME_MAP, HERO_UNIT_NAME_MAP, HERO_ABILITY_MAP, HERO_ABILITY_DETAILS_MAP
+    global HERO_NAME_MAP, HERO_UNIT_NAME_MAP, HERO_ABILITY_MAP, HERO_ABILITY_DETAILS_MAP, ABILITY_NAME_MAP
     global ITEM_NAME_MAP, ITEM_KEY_NAME_MAP, ITEM_DETAILS_MAP, PATCH_NAME_MAP
     global CURRENT_PATCH_ID, CURRENT_PATCH_NAME, GAME_DATA_LAST_REFRESH, GAME_DATA_LAST_ATTEMPT
     now = time.time()
@@ -297,6 +298,11 @@ async def load_hero_constants(force: bool = False):
                     if hero_resp.status == 200 and ability_resp.status == 200:
                         hero_abilities = await hero_resp.json()
                         abilities = await ability_resp.json()
+                        ABILITY_NAME_MAP = {
+                            ability_key: ability.get("dname", ability_key)
+                            for ability_key, ability in abilities.items()
+                            if ability.get("dname")
+                        }
                         ability_map = {}
                         ability_details_map = {}
                         for hero_id, unit_name in HERO_UNIT_NAME_MAP.items():
@@ -614,6 +620,156 @@ def extract_match_telemetry(match_data: dict):
     return radiant_heroes, dire_heroes, detailed_tracked_players, all_players
 
 
+def summarize_teamfights(match_data: dict) -> dict:
+    """Summarize recorded full 5v5s and player contributions without guessing actions."""
+    roster = match_data.get("players") or []
+    events = match_data.get("teamfights") or []
+    if len(roster) != 10 or not events:
+        return {"available": False, "reason": "OpenDota teamfight telemetry is unavailable."}
+
+    teams = {
+        "Radiant": {"wins": 0, "losses": 0, "ties": 0, "kills": 0, "deaths": 0, "damage": 0, "healing": 0, "buybacks": 0},
+        "Dire": {"wins": 0, "losses": 0, "ties": 0, "kills": 0, "deaths": 0, "damage": 0, "healing": 0, "buybacks": 0},
+    }
+    hero_totals = {}
+    recorded_engagements = 0
+    full_five_v_fives = 0
+
+    for fight in events:
+        fight_players = fight.get("players") or []
+        if len(fight_players) < len(roster):
+            continue
+
+        active_by_team = {"Radiant": 0, "Dire": 0}
+        fight_totals = {
+            "Radiant": {"deaths": 0, "damage": 0, "healing": 0, "buybacks": 0},
+            "Dire": {"deaths": 0, "damage": 0, "healing": 0, "buybacks": 0},
+        }
+        player_rows = []
+        for index, player in enumerate(roster):
+            event_player = fight_players[index] or {}
+            team = "Radiant" if player.get("isRadiant") else "Dire"
+            deaths = int(event_player.get("deaths") or 0)
+            damage = int(event_player.get("damage") or 0)
+            healing = int(event_player.get("healing") or 0)
+            buybacks = int(event_player.get("buybacks") or 0)
+            killed = event_player.get("killed") or {}
+            hero_kills = sum(
+                int(count or 0) for unit, count in killed.items()
+                if unit.startswith("npc_dota_hero_")
+            )
+            ability_uses = event_player.get("ability_uses") or {}
+            item_uses = event_player.get("item_uses") or {}
+            active = bool(
+                deaths or damage or healing or buybacks or hero_kills or ability_uses or item_uses
+            )
+            if active:
+                active_by_team[team] += 1
+
+            fight_totals[team]["deaths"] += deaths
+            fight_totals[team]["damage"] += damage
+            fight_totals[team]["healing"] += healing
+            fight_totals[team]["buybacks"] += buybacks
+            player_rows.append({
+                "hero": HERO_NAME_MAP.get(player.get("hero_id"), f"Hero_{player.get('hero_id')}"),
+                "team": team,
+                "account_id": player.get("account_id"),
+                "active": active,
+                "deaths": deaths,
+                "damage": damage,
+                "healing": healing,
+                "buybacks": buybacks,
+                "hero_kills": hero_kills,
+                "ability_uses": ability_uses,
+                "item_uses": item_uses,
+            })
+
+        if active_by_team["Radiant"] and active_by_team["Dire"]:
+            recorded_engagements += 1
+        if active_by_team["Radiant"] != 5 or active_by_team["Dire"] != 5:
+            continue
+
+        full_five_v_fives += 1
+        radiant_deaths = fight_totals["Radiant"]["deaths"]
+        dire_deaths = fight_totals["Dire"]["deaths"]
+        if radiant_deaths < dire_deaths:
+            teams["Radiant"]["wins"] += 1
+            teams["Dire"]["losses"] += 1
+        elif dire_deaths < radiant_deaths:
+            teams["Dire"]["wins"] += 1
+            teams["Radiant"]["losses"] += 1
+        else:
+            teams["Radiant"]["ties"] += 1
+            teams["Dire"]["ties"] += 1
+
+        for team in teams:
+            opponent = "Dire" if team == "Radiant" else "Radiant"
+            teams[team]["kills"] += fight_totals[opponent]["deaths"]
+            for metric in ("deaths", "damage", "healing", "buybacks"):
+                teams[team][metric] += fight_totals[team][metric]
+
+        for row in player_rows:
+            if not row["active"]:
+                continue
+            hero_key = (row["team"], row["hero"])
+            hero_totals.setdefault(hero_key, {
+                "hero": row["hero"], "team": row["team"], "fights_active": 0,
+                "deaths": 0, "damage": 0, "healing": 0, "buybacks": 0,
+                "hero_kills": 0, "ability_uses": Counter(), "item_uses": Counter(),
+                "tracked_player": False,
+            })
+            total = hero_totals[row["hero"]]
+            total["fights_active"] += 1
+            total["deaths"] += row["deaths"]
+            total["damage"] += row["damage"]
+            total["healing"] += row["healing"]
+            total["buybacks"] += row["buybacks"]
+            total["hero_kills"] += row["hero_kills"]
+            total["tracked_player"] = total["tracked_player"] or row["account_id"] in TRACKED_STEAM_IDS
+            total["ability_uses"].update({
+                ABILITY_NAME_MAP.get(key, key): int(count or 0)
+                for key, count in row["ability_uses"].items()
+            })
+            total["item_uses"].update({
+                ITEM_KEY_NAME_MAP.get(key, key.replace("_", " ").title()): int(count or 0)
+                for key, count in row["item_uses"].items()
+            })
+
+    if not full_five_v_fives:
+        return {
+            "available": True,
+            "recorded_engagements": recorded_engagements,
+            "full_5v5_count": 0,
+            "teams": teams,
+            "players": [],
+        }
+
+    players_summary = []
+    for total in hero_totals.values():
+        players_summary.append({
+            **{key: value for key, value in total.items() if key not in ("ability_uses", "item_uses")},
+            "ability_uses": dict(total["ability_uses"].most_common(5)),
+            "item_uses": dict(total["item_uses"].most_common(5)),
+        })
+
+    leaders = {}
+    for team in teams:
+        team_players = [row for row in players_summary if row["team"] == team]
+        leaders[team] = {
+            "top_damage": sorted(team_players, key=lambda row: row["damage"], reverse=True)[:2],
+            "most_deaths": sorted(team_players, key=lambda row: row["deaths"], reverse=True)[:2],
+        }
+    return {
+        "available": True,
+        "recorded_engagements": recorded_engagements,
+        "full_5v5_count": full_five_v_fives,
+        "outcome_method": "A teamfight win is determined by which team recorded fewer deaths in that engagement.",
+        "teams": teams,
+        "leaders": leaders,
+        "players": players_summary,
+    }
+
+
 def find_team_label_errors(content: str, team_by_hero: dict) -> list:
     """Detect explicit hero/team labels that contradict OpenDota's player slots."""
     errors = []
@@ -646,6 +802,45 @@ def build_verified_match_facts(match_data: dict) -> str:
         f"- Radiant roster: {', '.join(radiant)}.",
         f"- Dire roster: {', '.join(dire)}.",
     ]
+
+    teamfight_summary = summarize_teamfights(match_data)
+    if not teamfight_summary.get("available"):
+        lines.append("- 5v5 teamfight review: unavailable because OpenDota supplied no usable teamfight events.")
+    elif teamfight_summary.get("full_5v5_count"):
+        full_count = teamfight_summary["full_5v5_count"]
+        lines.append(
+            f"- Teamfight sample: {teamfight_summary['recorded_engagements']} recorded engagements; "
+            f"{full_count} had activity from all 10 players. Full 5v5 result is counted by fewer deaths in each event."
+        )
+        for team in ("Radiant", "Dire"):
+            totals = teamfight_summary["teams"][team]
+            lines.append(
+                f"  - {team} in those 5v5s: {totals['wins']} wins, {totals['losses']} losses, {totals['ties']} ties; "
+                f"hero kills {totals['kills']}, deaths {totals['deaths']}, damage {totals['damage']:,}, "
+                f"healing {totals['healing']:,}, buybacks {totals['buybacks']}."
+            )
+            leaders = teamfight_summary.get("leaders", {}).get(team, {})
+            top_damage = ", ".join(
+                f"{row['hero']} {row['damage']:,}" for row in leaders.get("top_damage", [])
+            ) or "unavailable"
+            most_deaths = ", ".join(
+                f"{row['hero']} {row['deaths']}" for row in leaders.get("most_deaths", [])
+            ) or "unavailable"
+            lines.append(f"    Top recorded damage: {top_damage}; most recorded deaths: {most_deaths}.")
+        tracked_fight_rows = [row for row in teamfight_summary.get("players", []) if row.get("tracked_player")]
+        for row in tracked_fight_rows:
+            ability_uses = ", ".join(f"{name} {count}" for name, count in row["ability_uses"].items()) or "none recorded"
+            item_uses = ", ".join(f"{name} {count}" for name, count in row["item_uses"].items()) or "none recorded"
+            lines.append(
+                f"- Tracked player {row['hero']} in full 5v5s: active in {row['fights_active']}/{full_count}; "
+                f"damage {row['damage']:,}; deaths {row['deaths']}; recorded ability uses: {ability_uses}; "
+                f"recorded item uses: {item_uses}."
+            )
+    else:
+        lines.append(
+            f"- Teamfight sample: {teamfight_summary['recorded_engagements']} recorded engagements, "
+            "but no complete all-10-player 5v5s were available for a full team comparison."
+        )
 
     gold_advantage = match_data.get("radiant_gold_adv") or []
     if gold_advantage:
@@ -808,6 +1003,7 @@ def build_current_item_catalog() -> dict:
 
 async def generate_ai_coaching_debrief(match_data: dict) -> Optional[str]:
     radiant_lineup, dire_lineup, tracked_players, all_players = extract_match_telemetry(match_data)
+    teamfight_summary = summarize_teamfights(match_data)
     team_by_hero = {player["hero"]: player["team"] for player in all_players}
     duration_mins = match_data.get("duration", 0) // 60
     winner = "Radiant" if match_data.get("radiant_win") else "Dire"
@@ -827,7 +1023,8 @@ async def generate_ai_coaching_debrief(match_data: dict) -> Optional[str]:
         "item catalog below for current recommendations. Do not claim that current mechanics describe an older "
         "match patch if the two patch versions differ.\n"
         "A separate verified-facts panel is printed from the API response. Do not restate or recalculate "
-        "scores, gold samples, all-player statistics, item inventories, or purchase times. In the tracked-player "
+        "scores, gold samples, all-player statistics, item inventories, or purchase times. In the Team 5v5 section, "
+        "you may cite only the recorded fight outcomes and teamfight contributions; in the tracked-player "
         "section only, you may cite the tracked player's relevant K/D/A, GPM, XPM, last hits, and the public "
         "ranked baseline metrics/item frequencies needed to explain a comparison. Do not infer that "
         "an item caused a win, loss, gank, or teamfight unless the supplied data records that event.\n"
@@ -844,14 +1041,16 @@ async def generate_ai_coaching_debrief(match_data: dict) -> Optional[str]:
         f"- Dire lineup: {', '.join(dire_lineup)}\n"
         f"- All player telemetry (final named items and key purchase timings included): {json.dumps(all_players, indent=2)}\n"
         f"- Tracked player telemetry: {json.dumps(tracked_players, indent=2)}\n\n"
+        f"- OpenDota teamfight summary (recorded participation and outcomes, not positioning or intent): {json.dumps(teamfight_summary, ensure_ascii=False)}\n"
         f"- Current patch item catalog (item name: current effect): {json.dumps(current_item_catalog, ensure_ascii=False)}\n\n"
         "Structure your response with these sections:\n"
         "🎯 **1. DRAFT MATCHUP** — Give one likely win condition per team as a hypothesis. Do not claim this is what actually happened in-game.\n"
-        "🛡️ **2. COUNTER ITEMS** — Give up to 2 specific recommendations with buyer hero, enemy target, and a current, accurate reason. Never invent an ability or Aghanim's upgrade.\n"
+        "⚔️ **2. TEAM 5v5 REVIEW** — Focus on the tracked player's team. Use the verified full 5v5 win/loss record, deaths, damage, healing, buybacks, and player contributions. Give one team strength and one team improvement supported by those records. If no complete 5v5 data exists, say so. Do not invent positioning, target selection, communication, spell hits, or objective conversion; offer a review/practice hypothesis rather than claiming an unobserved cause.\n"
+        "🛡️ **3. COUNTER ITEMS** — Give up to 2 specific recommendations with buyer hero, enemy target, and a current, accurate reason. Never invent an ability or Aghanim's upgrade.\n"
         "The ranked baseline contains only public ranked games played by this hero, verified as lobby_type 7 and the same patch. It is not the tracked player's personal history. The sample is limited and may be small; do not treat it as a complete or rank-matched meta.\n"
-        "⚔️ **3. TRACKED PLAYER** — Teach from the public ranked hero sample. Compare the tracked match with this hero's public ranked averages, prioritizing same-lane stats only when the verified panel provides at least 3 same-role games. Compare GPM/XPM directly, K/D/A per 10 minutes, and last hits per minute so different match lengths do not distort the comparison. Use common final items as descriptive build trends only. Identify one evidence-backed improvement area and explain why it follows from the comparison. Treat item frequency and win rate as descriptive, not proof of cause. If sample fields are missing, say so and use only the available comparison. Do not contradict the verified panel.\n"
-        "🎒 **4. BUILD REVIEW** — Give one itemization lesson based on the recorded final inventory. Do not repeat purchase times or claim an item caused a specific fight or win.\n"
-        "🗺️ **5. NEXT MATCH DRILL** — Give one measurable practice goal tied to a supported coaching point, not an unobserved event.\n"
+        "📈 **4. TRACKED PLAYER** — Teach from the public ranked hero sample. Compare the tracked match with this hero's public ranked averages, prioritizing same-lane stats only when the verified panel provides at least 3 same-role games. Compare GPM/XPM directly, K/D/A per 10 minutes, and last hits per minute so different match lengths do not distort the comparison. Use common final inventories as descriptive trends only. Identify one evidence-backed improvement area and explain why it follows from the comparison. Treat item frequency and win rate as descriptive, not proof of cause. If sample fields are missing, say so and use only the available comparison. Do not contradict the verified panel.\n"
+        "🎒 **5. BUILD REVIEW** — Give one itemization lesson based on the recorded final inventory and current item descriptions. Only say an item was used during a fight if the teamfight item-use telemetry records it. Do not claim an item caused a specific fight or win.\n"
+        "🗺️ **6. NEXT MATCH DRILL** — Give one measurable team practice goal based on the 5v5 data, plus a brief individual focus if useful. Do not set a goal based on an unobserved event.\n"
     )
 
     timeout = aiohttp.ClientTimeout(total=45)
