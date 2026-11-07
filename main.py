@@ -21,6 +21,8 @@ STATE_FILE = Path(os.environ.get("LAST_PROCESSED_MATCH_FILE", "last_processed_ma
 HISTORY_PAGE_SIZE = 100
 
 HERO_NAME_MAP = {}
+ITEM_NAME_MAP = {}
+ITEM_KEY_NAME_MAP = {}
 MATCH_STATE = {"accounts": {}, "pending": []}
 STATE_LOADED = False
 WEB_RUNNER = None
@@ -192,7 +194,7 @@ async def discover_unseen_matches(session: aiohttp.ClientSession, account_id: in
 
 
 async def load_hero_constants():
-    global HERO_NAME_MAP
+    global HERO_NAME_MAP, ITEM_NAME_MAP, ITEM_KEY_NAME_MAP
     timeout = aiohttp.ClientTimeout(total=20)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         try:
@@ -205,6 +207,25 @@ async def load_hero_constants():
                     print(f"[HEROES] Failed to fetch hero constants. Status: {resp.status}", flush=True)
         except Exception as exc:
             print(f"[HEROES] Exception loading hero constants: {exc}", flush=True)
+
+        try:
+            async with session.get("https://api.opendota.com/api/constants/items") as resp:
+                if resp.status == 200:
+                    items = await resp.json()
+                    ITEM_NAME_MAP = {
+                        int(item["id"]): item.get("dname", key.replace("_", " ").title())
+                        for key, item in items.items()
+                        if item.get("id") is not None
+                    }
+                    ITEM_KEY_NAME_MAP = {
+                        key: item.get("dname", key.replace("_", " ").title())
+                        for key, item in items.items()
+                    }
+                    print(f"[ITEMS] Loaded {len(ITEM_NAME_MAP)} item names.", flush=True)
+                else:
+                    print(f"[ITEMS] Failed to fetch item constants. Status: {resp.status}", flush=True)
+        except Exception as exc:
+            print(f"[ITEMS] Exception loading item constants: {exc}", flush=True)
 
 
 async def fetch_opendota_match(session: aiohttp.ClientSession, match_id: int):
@@ -251,73 +272,97 @@ def extract_match_telemetry(match_data: dict):
     radiant_heroes = []
     dire_heroes = []
     detailed_tracked_players = []
+    all_players = []
+    key_items = {
+        "black_king_bar", "blink", "manta", "orchid", "bfury", "force_staff",
+        "glimmer_cape", "pipe", "silver_edge", "desolator", "vessel",
+        "heavens_halberd", "aghanims_scepter", "aghanims_shard", "nullifier",
+        "rod_of_atos", "monkey_king_bar", "bloodthorn", "scythe_of_vyse", "skadi",
+        "shivas_guard", "assault", "lotus_orb", "aeon_disk", "crimson_guard",
+        "hurricane_pike", "linkens_sphere", "refresher", "solar_crest", "ghost",
+    }
+    lane_roles = {1: "Safe lane", 2: "Mid lane", 3: "Off lane", 4: "Jungle", 5: "Roaming"}
 
     for player in match_data.get("players", []):
         hero_id = player.get("hero_id")
         hero_name = HERO_NAME_MAP.get(hero_id, f"Hero_{hero_id}")
+        team = "Radiant" if player.get("isRadiant") else "Dire"
 
         if player.get("isRadiant"):
             radiant_heroes.append(hero_name)
         else:
             dire_heroes.append(hero_name)
 
+        purchase_log = player.get("purchase_log") or []
+        item_timings = {}
+        for purchase in purchase_log:
+            item_key = purchase.get("key")
+            if item_key in key_items and item_key not in item_timings:
+                item_name = ITEM_KEY_NAME_MAP.get(item_key, item_key.replace("_", " ").title())
+                item_timings[item_name] = f"{purchase.get('time', 0) // 60}m"
+
+        benchmarks = player.get("benchmarks") or {}
+        gpm_pct = (benchmarks.get("gold_per_min") or {}).get("pct")
+        kills = player.get("kills") or 0
+        assists = player.get("assists") or 0
+        team_kills = match_data.get("radiant_score" if player.get("isRadiant") else "dire_score") or 0
+        final_items = [
+            ITEM_NAME_MAP.get(player.get(f"item_{slot}", 0), "Unknown item")
+            for slot in range(6)
+            if player.get(f"item_{slot}", 0)
+        ]
+        player_summary = {
+            "hero": hero_name,
+            "team": team,
+            "lane": lane_roles.get(player.get("lane_role"), "Unknown"),
+            "kda": f"{kills}/{player.get('deaths', 0)}/{assists}",
+            "kill_participation_pct": round((kills + assists) / team_kills * 100, 1) if team_kills else None,
+            "last_hits": player.get("last_hits"),
+            "denies": player.get("denies"),
+            "cs_at_10": player.get("lh_ten"),
+            "gpm": player.get("gold_per_min"),
+            "gpm_percentile": round(gpm_pct * 100, 1) if gpm_pct is not None else None,
+            "xpm": player.get("xp_per_min"),
+            "hero_damage": player.get("hero_damage"),
+            "tower_damage": player.get("tower_damage"),
+            "final_items": final_items,
+            "key_item_timings": item_timings,
+        }
+        all_players.append(player_summary)
         if player.get("account_id") in TRACKED_STEAM_IDS:
-            purchase_log = player.get("purchase_log") or []
-            key_items = {
-                "black_king_bar", "blink", "manta", "orchid", "bfury", "force_staff",
-                "glimmer_cape", "pipe", "silver_edge", "desolator", "vessel",
-                "heavens_halberd", "aghanims_scepter", "nullifier", "rod_of_atos",
-                "monkey_king_bar", "bloodthorn", "scythe_of_vyse", "skadi", "shivas_guard",
-            }
-            item_timings = {}
-            for item in purchase_log:
-                item_key = item.get("key")
-                if item_key in key_items and item_key not in item_timings:
-                    item_timings[item_key] = f"{item.get('time', 0) // 60}m"
+            detailed_tracked_players.append(player_summary)
 
-            benchmarks = player.get("benchmarks") or {}
-            gpm_percentile = round(
-                (benchmarks.get("gold_per_min") or {}).get("pct", 0) * 100, 1
-            )
-            final_item_ids = [player.get(f"item_{i}", 0) for i in range(6)]
-
-            detailed_tracked_players.append({
-                "hero": hero_name,
-                "team": "Radiant" if player.get("isRadiant") else "Dire",
-                "kda": f"{player.get('kills')}/{player.get('deaths')}/{player.get('assists')}",
-                "cs_at_10": player.get("lh_ten", "N/A"),
-                "gpm": player.get("gold_per_min"),
-                "xpm": player.get("xp_per_min"),
-                "gpm_percentile": f"{gpm_percentile}%",
-                "key_item_timings": item_timings if item_timings else "None tracked",
-                "final_item_ids": final_item_ids,
-                "hero_damage": player.get("hero_damage"),
-                "tower_damage": player.get("tower_damage"),
-            })
-
-    return radiant_heroes, dire_heroes, detailed_tracked_players
+    return radiant_heroes, dire_heroes, detailed_tracked_players, all_players
 
 
 async def generate_ai_coaching_debrief(match_data: dict) -> Optional[str]:
-    radiant_lineup, dire_lineup, tracked_players = extract_match_telemetry(match_data)
+    radiant_lineup, dire_lineup, tracked_players, all_players = extract_match_telemetry(match_data)
     duration_mins = match_data.get("duration", 0) // 60
     winner = "Radiant" if match_data.get("radiant_win") else "Dire"
+    gold_advantage = match_data.get("radiant_gold_adv") or []
+    gold_samples = {
+        f"{minute}m": gold_advantage[min(minute, len(gold_advantage) - 1)]
+        for minute in (10, 20, 30, 40)
+        if gold_advantage
+    }
 
     coach_prompt = (
-        "You are an expert Dota 2 coach. Use only the match data supplied below. "
-        "Do not claim to know lane trades, wave control, spell usage, or team item purchases "
-        "unless those details appear in the data. If evidence is missing, say so. "
-        "Avoid inventing hero abilities, item interactions, or patch-specific mechanics.\n\n"
+        "You are a concise, evidence-led Dota 2 coach. Analyze the actual match data below. "
+        "Use hero mechanics only when you are confident they are current. Never invent spell usage, "
+        "lane events, or purchases. Say plainly when a field is unavailable.\n\n"
         f"MATCH METRICS:\n- Duration: {duration_mins} minutes | Winner: {winner}\n"
+        f"- Score: Radiant {match_data.get('radiant_score')} — {match_data.get('dire_score')} Dire\n"
+        f"- Radiant gold advantage samples: {json.dumps(gold_samples)}\n"
         f"- Radiant lineup: {', '.join(radiant_lineup)}\n"
         f"- Dire lineup: {', '.join(dire_lineup)}\n"
-        f"- Tracked player stats: {json.dumps(tracked_players, indent=2)}\n\n"
+        f"- All player telemetry (final named items and key purchase timings included): {json.dumps(all_players, indent=2)}\n"
+        f"- Tracked player telemetry: {json.dumps(tracked_players, indent=2)}\n\n"
         "Structure your response with these sections:\n"
-        "🎯 **1. DRAFT MATCHUP** — Describe likely win conditions from the lineups; label these as hypotheses.\n"
-        "🛡️ **2. ITEM IDEAS** — Suggest up to 3 counters, name the likely buyer and target, and note uncertainty.\n"
-        "⚔️ **3. TRACKED PLAYER** — Discuss the supplied CS@10, KDA, and available stats only.\n"
-        "🎒 **4. ITEM TIMINGS** — Review only the tracked player's recorded timings.\n"
-        "🗺️ **5. NEXT MATCH DRILL** — Give one actionable drill based on the available evidence.\n"
+        "🎯 **1. DRAFT MATCHUP** — State one likely win condition for each team and identify the actual matchup pressure points. Distinguish inference from observed stats.\n"
+        "🛡️ **2. COUNTER ITEMS** — Give up to 3 specific item recommendations. For each: buyer hero, enemy target, what threat it answers, and whether the item is already in that buyer's recorded final items. Avoid generic 'armor/escape' advice.\n"
+        "⚔️ **3. TRACKED PLAYER** — Compare the tracked player's lane role, last hits, denies, KDA, GPM/XPM, and damage with the match context. Do not call kills+deaths+assists 'participation'; calculate participation only if team kills are available.\n"
+        "🎒 **4. BUILD AND TIMINGS** — Use named final items and recorded key-item timings for all relevant players. Identify one concrete timing or build decision; do not interpret missing CS@10 as zero.\n"
+        "🗺️ **5. NEXT MATCH DRILL** — Give one specific measurable practice goal tied to an observed weakness or strength in this match.\n"
     )
 
     timeout = aiohttp.ClientTimeout(total=45)
