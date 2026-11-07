@@ -4,6 +4,7 @@ import os
 import re
 import time
 import traceback
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Optional
 
@@ -23,7 +24,10 @@ HISTORY_PAGE_SIZE = 100
 GAME_DATA_REFRESH_SECONDS = 6 * 60 * 60
 GAME_DATA_RETRY_SECONDS = 10 * 60
 RANKED_SAMPLE_CACHE_SECONDS = 6 * 60 * 60
-RANKED_SAMPLE_LIMIT = 100
+RANKED_DETAIL_SAMPLE_LIMIT = 10
+RANKED_DETAIL_CANDIDATE_LIMIT = 20
+RANKED_MATCH_SCAN_PAGE_SIZE = 100
+RANKED_MATCH_SCAN_MAX_PAGES = 12
 
 HERO_NAME_MAP = {}
 HERO_UNIT_NAME_MAP = {}
@@ -38,7 +42,6 @@ CURRENT_PATCH_NAME = None
 GAME_DATA_LAST_REFRESH = 0.0
 GAME_DATA_LAST_ATTEMPT = 0.0
 RANKED_HERO_SAMPLE_CACHE = {}
-RANKED_PERSONAL_SAMPLE_CACHE = {}
 MATCH_STATE = {"accounts": {}, "pending": []}
 STATE_LOADED = False
 WEB_RUNNER = None
@@ -331,99 +334,158 @@ async def load_hero_constants(force: bool = False):
 
 
 async def get_ranked_hero_sample(
-    session: aiohttp.ClientSession, hero_id: int, patch_id: Optional[int], account_id: Optional[int] = None
+    session: aiohttp.ClientSession, hero_id: int, patch_id: Optional[int]
 ) -> dict:
-    """Summarize recent public ranked matches for this hero and match patch."""
+    """Aggregate public ranked matches for this hero, explicitly verifying lobby and patch."""
     if patch_id is None:
         return {"available": False, "reason": "The match patch is missing from OpenDota data."}
 
     cache_key = (int(hero_id), int(patch_id))
     cached = RANKED_HERO_SAMPLE_CACHE.get(cache_key)
     if cached and time.time() - cached["fetched_at"] < RANKED_SAMPLE_CACHE_SECONDS:
-        sample = dict(cached["sample"])
-    else:
-        url = f"https://api.opendota.com/api/heroes/{hero_id}/matches"
-        try:
-            async with session.get(
-                url,
-                params={"limit": RANKED_SAMPLE_LIMIT, "patch": patch_id, "lobby_type": 7},
-            ) as resp:
+        return dict(cached["sample"])
+
+    # /heroes/{id}/matches does not reliably apply the lobby_type filter. Use
+    # OpenDota's public match feed, then verify lobby_type and patch on each detail.
+    candidates = []
+    cursor = None
+    try:
+        for _ in range(RANKED_MATCH_SCAN_MAX_PAGES):
+            params = {"less_than_match_id": cursor} if cursor is not None else None
+            async with session.get("https://api.opendota.com/api/publicMatches", params=params) as resp:
                 if resp.status != 200:
-                    return {"available": False, "reason": f"OpenDota returned HTTP {resp.status}."}
-                matches = await resp.json()
-        except Exception as exc:
-            print(f"[RANKED] Could not fetch hero {hero_id} ranked sample: {exc}", flush=True)
-            return {"available": False, "reason": "OpenDota ranked hero sample is temporarily unavailable."}
+                    reason = f"OpenDota public match feed returned HTTP {resp.status}."
+                    return {"available": False, "reason": reason}
+                page = await resp.json()
+            if not page:
+                break
+            for match in page:
+                if match.get("lobby_type") != 7:
+                    continue
+                radiant_team = match.get("radiant_team") or []
+                dire_team = match.get("dire_team") or []
+                if hero_id in radiant_team or hero_id in dire_team:
+                    candidates.append(match)
+                    if len(candidates) >= RANKED_DETAIL_CANDIDATE_LIMIT:
+                        break
+            cursor = page[-1].get("match_id")
+            if len(candidates) >= RANKED_DETAIL_CANDIDATE_LIMIT or not cursor or len(page) < RANKED_MATCH_SCAN_PAGE_SIZE:
+                break
+    except Exception as exc:
+        print(f"[RANKED] Could not scan public matches for hero {hero_id}: {exc}", flush=True)
+        return {"available": False, "reason": "OpenDota public ranked match data is temporarily unavailable."}
 
-        valid_matches = [
-            match for match in matches
-            if isinstance(match, dict) and match.get("radiant") is not None
-            and match.get("radiant_win") is not None
-        ]
-        wins = sum(bool(match["radiant"]) == bool(match["radiant_win"]) for match in valid_matches)
-        average_fields = {}
-        for field in ("kills", "deaths", "assists", "duration"):
-            values = [match.get(field) for match in valid_matches if isinstance(match.get(field), (int, float))]
-            if values:
-                average_fields[field] = round(sum(values) / len(values), 1)
-        sample = {
-            "available": bool(valid_matches),
-            "sample_size": len(valid_matches),
-            "wins": wins,
-            "win_rate_pct": round(wins / len(valid_matches) * 100, 1) if valid_matches else None,
-            "averages": average_fields,
-            "scope": f"up to {RANKED_SAMPLE_LIMIT} recent public ranked matches for this hero in patch {PATCH_NAME_MAP.get(int(patch_id), patch_id)}",
-        }
-        RANKED_HERO_SAMPLE_CACHE[cache_key] = {
-            "fetched_at": time.time(),
-            "sample": {key: value for key, value in sample.items()},
-        }
-
-    if account_id is not None and sample.get("available"):
-        personal_cache_key = (int(account_id), int(hero_id), int(patch_id))
-        personal_cached = RANKED_PERSONAL_SAMPLE_CACHE.get(personal_cache_key)
-        if personal_cached and time.time() - personal_cached["fetched_at"] < RANKED_SAMPLE_CACHE_SECONDS:
-            sample["tracked_player_sample"] = dict(personal_cached["sample"])
-            return sample
+    role_names = {1: "Safe lane", 2: "Mid lane", 3: "Off lane", 4: "Jungle", 5: "Roaming"}
+    records = []
+    for match in candidates:
+        match_id = match.get("match_id")
         try:
-            url = f"https://api.opendota.com/api/players/{account_id}/matches"
-            async with session.get(
-                url,
-                params={
-                    "limit": RANKED_SAMPLE_LIMIT,
-                    "hero_id": hero_id,
-                    "patch": patch_id,
-                    "lobby_type": 7,
-                },
-            ) as resp:
-                if resp.status == 200:
-                    personal_matches = await resp.json()
-                    personal_matches = [
-                        match for match in personal_matches
-                        if isinstance(match, dict) and match.get("radiant") is not None
-                        and match.get("radiant_win") is not None
-                    ]
-                    personal_wins = sum(
-                        bool(match["radiant"]) == bool(match["radiant_win"])
-                        for match in personal_matches
-                    )
-                    personal_sample = {
-                        "sample_size": len(personal_matches),
-                        "wins": personal_wins,
-                        "win_rate_pct": round(personal_wins / len(personal_matches) * 100, 1)
-                        if personal_matches else None,
-                    }
-                    RANKED_PERSONAL_SAMPLE_CACHE[personal_cache_key] = {
-                        "fetched_at": time.time(),
-                        "sample": personal_sample,
-                    }
-                    sample["tracked_player_sample"] = personal_sample
+            async with session.get(f"https://api.opendota.com/api/matches/{match_id}") as resp:
+                if resp.status != 200:
+                    continue
+                detail = await resp.json()
         except Exception as exc:
-            print(f"[RANKED] Could not fetch tracked player's hero sample: {exc}", flush=True)
-    return sample
+            print(f"[RANKED] Could not fetch public ranked match {match_id}: {exc}", flush=True)
+            continue
+
+        if detail.get("lobby_type") != 7 or detail.get("patch") != int(patch_id):
+            continue
+        hero_player = next(
+            (player for player in detail.get("players", []) if player.get("hero_id") == int(hero_id)),
+            None,
+        )
+        if not hero_player or match.get("radiant_win") is None:
+            continue
+        on_radiant = int(hero_id) in (match.get("radiant_team") or [])
+        records.append({
+            "won": on_radiant == bool(match["radiant_win"]),
+            "lane_role": role_names.get(hero_player.get("lane_role")),
+            "stats": {
+                field: hero_player.get(field)
+                for field in ("kills", "deaths", "assists", "gold_per_min", "xp_per_min", "last_hits", "hero_damage", "tower_damage", "duration")
+                if isinstance(hero_player.get(field), (int, float))
+            },
+            "duration": detail.get("duration") or match.get("duration"),
+            "final_items": [
+                ITEM_NAME_MAP.get(hero_player.get(f"item_{slot}"), "Unknown item")
+                for slot in range(6)
+                if hero_player.get(f"item_{slot}")
+            ],
+        })
+        if len(records) >= RANKED_DETAIL_SAMPLE_LIMIT:
+            break
+
+    def average_stats(rows: list) -> dict:
+        fields = ("gold_per_min", "xp_per_min", "last_hits", "hero_damage", "tower_damage")
+        averages = {}
+        for field in fields:
+            values = [row["stats"][field] for row in rows if field in row["stats"]]
+            if values:
+                averages[field] = round(sum(values) / len(values), 1)
+        return averages
+
+    def rate_stats(rows: list) -> dict:
+        rates = {}
+        for field in ("kills", "deaths", "assists"):
+            valid_rows = [
+                row for row in rows
+                if field in row["stats"] and isinstance(row.get("duration"), (int, float)) and row["duration"] > 0
+            ]
+            minutes = sum(row["duration"] for row in valid_rows) / 60
+            if minutes:
+                rates[f"{field}_per_10m"] = round(
+                    sum(row["stats"][field] for row in valid_rows) / minutes * 10, 2
+                )
+        valid_lh_rows = [
+            row for row in rows
+            if "last_hits" in row["stats"] and isinstance(row.get("duration"), (int, float)) and row["duration"] > 0
+        ]
+        lh_minutes = sum(row["duration"] for row in valid_lh_rows) / 60
+        if lh_minutes:
+            rates["last_hits_per_min"] = round(
+                sum(row["stats"]["last_hits"] for row in valid_lh_rows) / lh_minutes, 2
+            )
+        return rates
+
+    wins = sum(record["won"] for record in records)
+    role_groups = defaultdict(list)
+    item_counts = Counter()
+    for record in records:
+        if record.get("lane_role"):
+            role_groups[record["lane_role"]].append(record)
+        item_counts.update(
+            item for item in set(record.get("final_items", [])) if item != "Unknown item"
+        )
+
+    sample = {
+        "available": bool(records),
+        "sample_size": len(records),
+        "wins": wins,
+        "win_rate_pct": round(wins / len(records) * 100, 1) if records else None,
+        "averages": average_stats(records),
+        "rates": rate_stats(records),
+        "lane_role_counts": {role: len(rows) for role, rows in role_groups.items()},
+        "by_lane_role": {
+            role: {
+                "sample_size": len(rows),
+                "wins": sum(row["won"] for row in rows),
+                "win_rate_pct": round(sum(row["won"] for row in rows) / len(rows) * 100, 1),
+                "averages": average_stats(rows),
+                "rates": rate_stats(rows),
+            }
+            for role, rows in role_groups.items() if len(rows) >= 3
+        },
+        "common_final_items": [
+            {"name": item, "matches": count, "sample_rate_pct": round(count / len(records) * 100, 1)}
+            for item, count in item_counts.most_common(6)
+        ] if records else [],
+        "scope": f"up to {RANKED_DETAIL_SAMPLE_LIMIT} recent public ranked matches for this hero in patch {PATCH_NAME_MAP.get(int(patch_id), patch_id)}",
+    }
+    RANKED_HERO_SAMPLE_CACHE[cache_key] = {"fetched_at": time.time(), "sample": sample}
+    return dict(sample)
 
 
-async def add_ranked_context(session: aiohttp.ClientSession, match_data: dict, account_id: int) -> None:
+async def add_ranked_context(session: aiohttp.ClientSession, match_data: dict) -> None:
     """Attach same-patch ranked aggregates for each tracked hero in this match."""
     patch_id = match_data.get("patch")
     context = {}
@@ -437,7 +499,6 @@ async def add_ranked_context(session: aiohttp.ClientSession, match_data: dict, a
             session,
             int(hero_id),
             int(patch_id) if patch_id is not None else None,
-            account_id=int(player.get("account_id") or account_id),
         )
     match_data["_ranked_hero_samples"] = context
 
@@ -629,28 +690,96 @@ def build_verified_match_facts(match_data: dict) -> str:
         sample = player.get("ranked_hero_sample") or {}
         if sample.get("available"):
             averages = sample.get("averages", {})
+            metric_names = {
+                "gold_per_min": "GPM", "xp_per_min": "XPM", "last_hits": "LH/game",
+                "hero_damage": "hero damage/game",
+            }
             avg_text = ", ".join(
-                f"avg {field} {averages[field]}" for field in ("kills", "deaths", "assists")
-                if field in averages
+                f"avg {metric_names[field]} {averages[field]}"
+                for field in metric_names if field in averages
             )
+            rates = sample.get("rates", {})
+            rate_names = {
+                "kills_per_10m": "K/10m", "deaths_per_10m": "D/10m",
+                "assists_per_10m": "A/10m", "last_hits_per_min": "LH/min",
+            }
+            rate_text = ", ".join(
+                f"{rate_names[field]} {rates[field]}" for field in rate_names if field in rates
+            )
+            lane_counts = ", ".join(
+                f"{role}: {count}" for role, count in sample.get("lane_role_counts", {}).items()
+            ) or "lane role unavailable"
+            common_items = ", ".join(
+                f"{item['name']} in {item['matches']}/{sample['sample_size']}"
+                for item in sample.get("common_final_items", [])
+            ) or "item frequency unavailable"
             lines.append(
                 f"- Same-hero ranked baseline for {player['hero']}: {sample['sample_size']} recent public ranked matches "
                 f"in {PATCH_NAME_MAP.get(int(match_patch_id), match_patch)}; {sample['wins']} wins "
-                f"({sample['win_rate_pct']}%); {avg_text or 'K/D/A averages unavailable'}. "
-                "This is a hero-level sample, not matched to the player's rank or lane."
+                f"({sample['win_rate_pct']}%); {avg_text or 'parsed averages unavailable'}; "
+                f"rate-adjusted stats: {rate_text or 'unavailable'}. "
+                f"Lane roles: {lane_counts}. Common final inventories: {common_items}. "
+                "This is a public hero-level sample, not matched to the tracked player's rank."
             )
-            personal = sample.get("tracked_player_sample")
-            if personal is not None:
-                if personal.get("sample_size"):
-                    lines.append(
-                        f"- Tracked player's public same-hero ranked matches found in this patch: "
-                        f"{personal['sample_size']}; {personal['wins']} wins ({personal['win_rate_pct']}%)."
+            same_role = sample.get("by_lane_role", {}).get(player.get("lane"))
+            baseline_averages = same_role.get("averages", {}) if same_role else averages
+            baseline_rates = same_role.get("rates", {}) if same_role else rates
+            baseline_label = (
+                f"same-role public baseline (n={same_role['sample_size']})"
+                if same_role else f"all-role public baseline (n={sample['sample_size']})"
+            )
+            tracked_kda = player.get("kda", "").split("/")
+            match_minutes = (match_data.get("duration") or 0) / 60
+            tracked_values = {
+                "kills_per_10m": round(int(tracked_kda[0]) / match_minutes * 10, 2) if match_minutes and len(tracked_kda) == 3 and tracked_kda[0].isdigit() else None,
+                "deaths_per_10m": round(int(tracked_kda[1]) / match_minutes * 10, 2) if match_minutes and len(tracked_kda) == 3 and tracked_kda[1].isdigit() else None,
+                "assists_per_10m": round(int(tracked_kda[2]) / match_minutes * 10, 2) if match_minutes and len(tracked_kda) == 3 and tracked_kda[2].isdigit() else None,
+                "gold_per_min": player.get("gpm"),
+                "xp_per_min": player.get("xpm"),
+                "last_hits_per_min": player.get("last_hits") / match_minutes
+                if match_minutes and isinstance(player.get("last_hits"), (int, float)) else None,
+            }
+            if tracked_values["last_hits_per_min"] is not None:
+                tracked_values["last_hits_per_min"] = round(tracked_values["last_hits_per_min"], 2)
+            comparison_names = {
+                "kills_per_10m": "K/10m", "deaths_per_10m": "D/10m",
+                "assists_per_10m": "A/10m", "gold_per_min": "GPM",
+                "xp_per_min": "XPM", "last_hits_per_min": "LH/min",
+            }
+            comparisons = []
+            for field, name in comparison_names.items():
+                current_value = tracked_values.get(field)
+                baseline_value = (
+                    baseline_rates.get(field) if field in baseline_rates
+                    else baseline_averages.get(field)
+                )
+                if isinstance(current_value, (int, float)) and isinstance(baseline_value, (int, float)):
+                    comparisons.append(
+                        f"{name} {current_value} vs {baseline_value} avg "
+                        f"({current_value - baseline_value:+.1f})"
                     )
-                else:
-                    lines.append(
-                        "- No public tracked-player ranked matches for this hero were returned for this patch; "
-                        "this does not establish that none were played."
-                    )
+            if comparisons:
+                lines.append(
+                    f"- Tracked match vs {baseline_label} for {player['hero']}: "
+                    + "; ".join(comparisons) + "."
+                )
+            if same_role:
+                role_averages = same_role.get("averages", {})
+                role_rates = same_role.get("rates", {})
+                role_stats = ", ".join(
+                    f"avg {metric_names[field]} {role_averages[field]}"
+                    for field in ("gold_per_min", "xp_per_min", "last_hits", "kills", "deaths", "assists")
+                    if field in role_averages
+                )
+                role_stats += (", " if role_stats and role_rates else "") + ", ".join(
+                    f"{rate_names[field]} {role_rates[field]}"
+                    for field in rate_names if field in role_rates
+                )
+                lines.append(
+                    f"- Public same-role {player.get('lane')} baseline for {player['hero']}: "
+                    f"{same_role['sample_size']} matches, {same_role['win_rate_pct']}% win rate; "
+                    f"{role_stats or 'parsed averages unavailable'}."
+                )
         else:
             lines.append(
                 f"- Same-patch ranked hero baseline for {player['hero']}: unavailable"
@@ -699,8 +828,8 @@ async def generate_ai_coaching_debrief(match_data: dict) -> Optional[str]:
         "match patch if the two patch versions differ.\n"
         "A separate verified-facts panel is printed from the API response. Do not restate or recalculate "
         "scores, gold samples, all-player statistics, item inventories, or purchase times. In the tracked-player "
-        "section only, you may cite the tracked player's K/D/A and the ranked sample averages/win rate needed "
-        "to explain the comparison. Do not infer that "
+        "section only, you may cite the tracked player's relevant K/D/A, GPM, XPM, last hits, and the public "
+        "ranked baseline metrics/item frequencies needed to explain a comparison. Do not infer that "
         "an item caused a win, loss, gank, or teamfight unless the supplied data records that event.\n"
         "The current ability names and descriptions in each player's telemetry are authoritative. "
         "The current item catalog descriptions are authoritative. Do not name abilities absent from the roster "
@@ -719,7 +848,8 @@ async def generate_ai_coaching_debrief(match_data: dict) -> Optional[str]:
         "Structure your response with these sections:\n"
         "🎯 **1. DRAFT MATCHUP** — Give one likely win condition per team as a hypothesis. Do not claim this is what actually happened in-game.\n"
         "🛡️ **2. COUNTER ITEMS** — Give up to 2 specific recommendations with buyer hero, enemy target, and a current, accurate reason. Never invent an ability or Aghanim's upgrade.\n"
-        "⚔️ **3. TRACKED PLAYER** — Use the same-hero, same-patch ranked sample in the verified facts to compare the tracked match's K/D/A with the sample averages and win rate. State the sample size and that it is not rank- or lane-matched. Explain one useful lesson from the comparison without treating one match as proof of skill. If the sample is unavailable, say so and teach from this match's supported telemetry only. Do not contradict the verified panel.\n"
+        "The ranked baseline contains only public ranked games played by this hero, verified as lobby_type 7 and the same patch. It is not the tracked player's personal history. The sample is limited and may be small; do not treat it as a complete or rank-matched meta.\n"
+        "⚔️ **3. TRACKED PLAYER** — Teach from the public ranked hero sample. Compare the tracked match with this hero's public ranked averages, prioritizing same-lane stats only when the verified panel provides at least 3 same-role games. Compare GPM/XPM directly, K/D/A per 10 minutes, and last hits per minute so different match lengths do not distort the comparison. Use common final items as descriptive build trends only. Identify one evidence-backed improvement area and explain why it follows from the comparison. Treat item frequency and win rate as descriptive, not proof of cause. If sample fields are missing, say so and use only the available comparison. Do not contradict the verified panel.\n"
         "🎒 **4. BUILD REVIEW** — Give one itemization lesson based on the recorded final inventory. Do not repeat purchase times or claim an item caused a specific fight or win.\n"
         "🗺️ **5. NEXT MATCH DRILL** — Give one measurable practice goal tied to a supported coaching point, not an unobserved event.\n"
     )
@@ -879,7 +1009,7 @@ async def check_recent_matches():
                 defer_pending_match(account_id, match_id, "OpenDota match data unavailable")
                 return
 
-            await add_ranked_context(session, match_data, account_id)
+            await add_ranked_context(session, match_data)
 
             debrief_text = await generate_ai_coaching_debrief(match_data)
             if not debrief_text:
