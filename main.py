@@ -382,41 +382,91 @@ def find_team_label_errors(content: str, team_by_hero: dict) -> list:
     return errors
 
 
+def build_verified_match_facts(match_data: dict) -> str:
+    """Render source data directly so the model cannot alter match facts."""
+    radiant, dire, tracked_players, all_players = extract_match_telemetry(match_data)
+    duration = (match_data.get("duration") or 0) // 60
+    winner = "Radiant" if match_data.get("radiant_win") else "Dire"
+    lines = [
+        "📊 **VERIFIED OPENDOTA FACTS — NOT AI INTERPRETATION**",
+        f"- Result: {winner} won {match_data.get('radiant_score')}-{match_data.get('dire_score')} in {duration} minutes.",
+        f"- Radiant roster: {', '.join(radiant)}.",
+        f"- Dire roster: {', '.join(dire)}.",
+    ]
+
+    gold_advantage = match_data.get("radiant_gold_adv") or []
+    if gold_advantage:
+        samples = []
+        for minute in (10, 20, 30, 40):
+            if minute >= len(gold_advantage):
+                continue
+            advantage = int(gold_advantage[minute])
+            if advantage > 0:
+                leader, amount = "Radiant", advantage
+            elif advantage < 0:
+                leader, amount = "Dire", abs(advantage)
+            else:
+                leader, amount = "even", 0
+            samples.append(f"{minute}m: {leader} +{amount:,}")
+        if samples:
+            lines.append("- Gold lead samples: " + "; ".join(samples) + ".")
+
+    tracked_names = {player["hero"] for player in tracked_players}
+    lines.append("- Player stats, final inventories, and recorded key-item purchase times:")
+    for player in all_players:
+        tracked_label = " **(tracked player)**" if player["hero"] in tracked_names else ""
+        percentile = (
+            f", GPM percentile {player['gpm_percentile']}%"
+            if player.get("gpm_percentile") is not None else ""
+        )
+        items = ", ".join(player.get("final_items") or []) or "none listed"
+        timings = player.get("key_item_timings") or {}
+        timing_text = ", ".join(f"{item} {time}" for item, time in timings.items()) or "none in tracked timing list"
+        line = (
+            f"  - {player['team']} {player['hero']} ({player['lane']}): "
+            f"KDA {player['kda']}; LH {player.get('last_hits')}; denies {player.get('denies')}; "
+            f"GPM {player.get('gpm')}{percentile}; XPM {player.get('xpm')}; "
+            f"hero damage {player.get('hero_damage')}; tower damage {player.get('tower_damage')}; "
+            f"final items: {items}; key timings: {timing_text}.{tracked_label}"
+        )
+        lines.append(line)
+
+    if tracked_players and all(player.get("cs_at_10") is None for player in tracked_players):
+        lines.append("- CS@10: unavailable in the OpenDota match response for the tracked player.")
+    lines.append("AI coaching text follows; it contains interpretations, not verified match facts.")
+    return "\n".join(lines)
+
+
 async def generate_ai_coaching_debrief(match_data: dict) -> Optional[str]:
     radiant_lineup, dire_lineup, tracked_players, all_players = extract_match_telemetry(match_data)
     team_by_hero = {player["hero"]: player["team"] for player in all_players}
     duration_mins = match_data.get("duration", 0) // 60
     winner = "Radiant" if match_data.get("radiant_win") else "Dire"
-    gold_advantage = match_data.get("radiant_gold_adv") or []
-    gold_samples = {
-        f"{minute}m": gold_advantage[min(minute, len(gold_advantage) - 1)]
-        for minute in (10, 20, 30, 40)
-        if gold_advantage
-    }
 
     coach_prompt = (
         "You are a concise, evidence-led Dota 2 coach. Analyze the actual match data below. "
         "Use hero mechanics only when you are confident they are current. Never invent spell usage, "
         "lane events, or purchases. Say plainly when a field is unavailable.\n\n"
+        "A separate verified-facts panel is printed from the API response. Do not restate or recalculate "
+        "scores, gold samples, player statistics, item inventories, or purchase times. Do not infer that "
+        "an item caused a win, loss, gank, or teamfight unless the supplied data records that event.\n"
         "The current ability list in each player's telemetry is authoritative. Do not name abilities "
         "that are absent from it, and do not invent Aghanim's Scepter/Shard upgrade effects.\n"
         "TEAM ASSIGNMENTS ARE AUTHORITATIVE. Never place a hero on the other team. "
         "Only describe cross-team matchups between these rosters.\n"
         f"RADIANT ROSTER: {', '.join(radiant_lineup)}\n"
         f"DIRE ROSTER: {', '.join(dire_lineup)}\n\n"
-        f"MATCH METRICS:\n- Duration: {duration_mins} minutes | Winner: {winner}\n"
-        f"- Score: Radiant {match_data.get('radiant_score')} — {match_data.get('dire_score')} Dire\n"
-        f"- Radiant gold advantage samples: {json.dumps(gold_samples)}\n"
+        f"MATCH CONTEXT:\n- Duration: {duration_mins} minutes | Winner: {winner}\n"
         f"- Radiant lineup: {', '.join(radiant_lineup)}\n"
         f"- Dire lineup: {', '.join(dire_lineup)}\n"
         f"- All player telemetry (final named items and key purchase timings included): {json.dumps(all_players, indent=2)}\n"
         f"- Tracked player telemetry: {json.dumps(tracked_players, indent=2)}\n\n"
         "Structure your response with these sections:\n"
-        "🎯 **1. DRAFT MATCHUP** — State one likely win condition for each team and identify the actual matchup pressure points. Distinguish inference from observed stats.\n"
-        "🛡️ **2. COUNTER ITEMS** — Give up to 3 specific item recommendations. For each: buyer hero, enemy target, what threat it answers, and whether the item is already in that buyer's recorded final items. Avoid generic 'armor/escape' advice.\n"
-        "⚔️ **3. TRACKED PLAYER** — Compare the tracked player's lane role, last hits, denies, KDA, GPM/XPM, and damage with the match context. Do not call kills+deaths+assists 'participation'; calculate participation only if team kills are available.\n"
-        "🎒 **4. BUILD AND TIMINGS** — Use named final items and recorded key-item timings for all relevant players. Identify one concrete timing or build decision; do not interpret missing CS@10 as zero.\n"
-        "🗺️ **5. NEXT MATCH DRILL** — Give one specific measurable practice goal tied to an observed weakness or strength in this match.\n"
+        "🎯 **1. DRAFT MATCHUP** — Give one likely win condition per team as a hypothesis. Do not claim this is what actually happened in-game.\n"
+        "🛡️ **2. COUNTER ITEMS** — Give up to 2 specific recommendations with buyer hero, enemy target, and a current, accurate reason. Never invent an ability or Aghanim's upgrade.\n"
+        "⚔️ **3. TRACKED PLAYER** — Give one coaching strength and one improvement area grounded in the telemetry. Do not repeat numbers from the verified facts panel.\n"
+        "🎒 **4. BUILD REVIEW** — Give one itemization lesson based on the recorded final inventory. Do not repeat purchase times or claim an item caused a specific fight or win.\n"
+        "🗺️ **5. NEXT MATCH DRILL** — Give one measurable practice goal tied to a supported coaching point, not an unobserved event.\n"
     )
 
     timeout = aiohttp.ClientTimeout(total=45)
@@ -495,17 +545,7 @@ async def generate_ai_coaching_debrief(match_data: dict) -> Optional[str]:
     if not LLM_API_KEY and not GROQ_API_KEY:
         print("[AI] No LLM_API_KEY or GROQ_API_KEY is configured.", flush=True)
     if team_validation_failed:
-        # Factual-only fallback: do not publish a known team-mislabeled draft.
-        tracked_facts = json.dumps(tracked_players, indent=2)
-        return (
-            "⚠️ AI coaching text was withheld because team assignments failed validation.\n\n"
-            f"Verified result: {winner} won {match_data.get('radiant_score')}-{match_data.get('dire_score')} "
-            f"in {duration_mins} minutes.\n"
-            f"Radiant roster: {', '.join(radiant_lineup)}.\n"
-            f"Dire roster: {', '.join(dire_lineup)}.\n"
-            f"Radiant gold advantage samples: {json.dumps(gold_samples)}.\n"
-            f"Tracked-player telemetry: {tracked_facts}"
-        )
+        return "⚠️ AI coaching text withheld because team assignments failed validation. See the verified facts above."
     return None
 
 
@@ -589,7 +629,9 @@ async def check_recent_matches():
                 defer_pending_match(account_id, match_id, "AI providers unavailable")
                 return
 
-            text_parts = chunk_debrief(debrief_text)
+            verified_facts = build_verified_match_facts(match_data)
+            complete_debrief = f"{verified_facts}\n\n---\n\n{debrief_text}"
+            text_parts = chunk_debrief(complete_debrief)
             total_parts = len(text_parts)
             for idx, part in enumerate(text_parts, 1):
                 title = f"🧠 Dota 2 AI Debrief — Match {match_id}"
