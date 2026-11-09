@@ -874,10 +874,17 @@ def find_team_label_errors(content: str, team_by_hero: dict) -> list:
     for hero, actual_team in team_by_hero.items():
         wrong_team = "Dire" if actual_team == "Radiant" else "Radiant"
         escaped_hero = re.escape(hero)
+        # The two adjacency patterns deliberately match spaces and tabs but not
+        # newlines. With \s they fired across a line break, so a roster list
+        # ending in "Radiant" followed by a line starting with a Dire hero was
+        # read as a mislabel. That cost the whole coaching section, since a
+        # second failed validation withholds it. A mislabel split over two lines
+        # now goes undetected, which is the cheaper error: the verified panel
+        # directly above always prints the true rosters.
         patterns = (
             rf"\b{escaped_hero}\s*\(\s*{wrong_team}\s*\)",
-            rf"\b{wrong_team}\s+{escaped_hero}\b",
-            rf"\b{wrong_team}[’']s\s+{escaped_hero}\b",
+            rf"\b{wrong_team}[ \t]+{escaped_hero}\b",
+            rf"\b{wrong_team}[’']s[ \t]+{escaped_hero}\b",
             rf"\b{escaped_hero}\s+(?:is|was|plays|played)\s+(?:on|for|with)\s+{wrong_team}\b",
         )
         if any(re.search(pattern, content, flags=re.IGNORECASE) for pattern in patterns):
