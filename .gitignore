@@ -1,0 +1,15 @@
+# Runtime state
+last_processed_match.json
+last_processed_match.json.tmp
+*.tmp
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
