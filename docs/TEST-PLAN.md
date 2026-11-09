@@ -4,8 +4,15 @@ The regression layer now exists: 48 tests in `tests/`, run with `python3 run_tes
 covering the seven bugs fixed so far. This document is what remains, plus the reasoning behind the
 order.
 
-Status: the **Regression cases** section below is done. Items 1 to 5 are partly done — each has the
-regression case written, none has the full case list. The sections after that are untouched.
+Status: **done.** 114 tests. Items 1 to 5 below are complete, the regression cases are complete, and
+two things not in the original plan were added: frozen golden output including the coaching prompt,
+and hand-audited arithmetic that recomputes the teamfight totals from the fixture instead of calling
+the code under test.
+
+What is deliberately still not covered: the network paths (`GameData.refresh` beyond its fixture,
+`get_ranked_hero_sample`, the OpenDota history scan) and `generate_ai_coaching_debrief` end to end,
+since its output is nondeterministic. The provider chain, the prompt, the correction prompt and the
+claim checks are each tested on their own instead.
 
 ## Setup
 

@@ -129,14 +129,21 @@ python3 run_tests.py queue      # only files matching "queue"
 pytest                          # same tests, if you have it
 ```
 
-48 tests, no dependencies and no network. `discord.py` and `aiohttp` are stubbed in
+114 tests, no dependencies and no network. `discord.py` and `aiohttp` are stubbed in
 `tests/_support.py`, and the OpenDota responses come from `tests/fixtures`: a parsed match, an
 unparsed one, and game constants projected down to the fields `main.py` reads. Two further cases,
 an empty teamfight log and a match with no full 5v5, are derived from the parsed fixture in code
 rather than stored as near-duplicates.
 
-The suite covers the seven bugs fixed in this project's history; run it against the commit before
-them and 23 of the 48 fail.
+The suite covers every bug fixed in this project's history plus the behaviour added since. Two parts
+of it are worth knowing about:
+
+- `tests/test_golden.py` freezes the derived analysis, the rendered panel, its chunking and the
+  43,000-character coaching prompt. It was captured before the module split and asserts byte
+  equality, which is what made an eight-step refactor checkable rather than hopeful.
+- `tests/test_audited_totals.py` recomputes the teamfight arithmetic from the fixture by hand
+  instead of calling the function, so a change in how something is counted disagrees rather than
+  quietly following along.
 
 ## Roadmap
 
@@ -144,7 +151,7 @@ them and 23 of the 48 fail.
 - [x] Survive a Render restart by recovering cursors from the channel
 - [x] Split `main.py` into modules — 1365 lines became 158 across eleven modules
 - [x] Regression tests for the fixed bugs, with a dependency-free runner and CI
-- [ ] Widen coverage: hand-audited `summarize_teamfights` totals, full `extract_match_telemetry` cases
+- [x] Widen coverage: hand-audited `summarize_teamfights` totals, full `extract_match_telemetry` cases
 - [x] Bound the match-history scan so an old cursor cannot walk the whole history
 - [x] Cache parsed matches so a retry does not re-download one
 - [x] Slash command for on-demand debriefs of a given match id
