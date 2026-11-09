@@ -184,6 +184,18 @@ def main_module():
     return _main
 
 
+def analysis_module():
+    """The match-analysis module, with stubs already installed."""
+    main_module()
+    import analysis
+    return analysis
+
+
+def tracked_ids(match):
+    """The first real account id in a match, as a stable tracked-player choice."""
+    return sorted(p["account_id"] for p in match["players"] if p.get("account_id"))[:1]
+
+
 def state_module():
     """The queue module, with stubs already installed by importing main."""
     main_module()
