@@ -306,7 +306,18 @@ async def load_hero_constants(force: bool = False):
                         ability_map = {}
                         ability_details_map = {}
                         for hero_id, unit_name in HERO_UNIT_NAME_MAP.items():
-                            names = hero_abilities.get(unit_name, {}).get("abilities", [])
+                            raw_names = hero_abilities.get(unit_name, {}).get("abilities", [])
+                            # OpenDota nests a list here for heroes with a second
+                            # form (Monkey King). An unflattened list is unhashable,
+                            # so the `name in abilities` test below used to raise and
+                            # abort the whole loop, losing ability data for every hero.
+                            names = []
+                            for entry in raw_names:
+                                if isinstance(entry, list):
+                                    names.extend(entry)
+                                else:
+                                    names.append(entry)
+                            names = [name for name in names if isinstance(name, str)]
                             ability_map[HERO_NAME_MAP[hero_id]] = [
                                 abilities[name].get("dname", name)
                                 for name in names
