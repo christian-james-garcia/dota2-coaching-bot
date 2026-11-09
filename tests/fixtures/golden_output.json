@@ -1,0 +1,1251 @@
+{
+ "analysis": {
+  "all_players": [
+   {
+    "cs_at_10": null,
+    "current_abilities": [
+     "Illuminate",
+     "Blinding Light",
+     "Chakra Magic",
+     "Solar Bind",
+     "Will-O-Wisp",
+     "Spirit Form",
+     "Release Illuminate",
+     "Bright Speed"
+    ],
+    "current_ability_details": [
+     {
+      "description": "CHANNELED - Channels light energy, building power the longer it's channeled. Once released, a wave is sent forth that deals damage and gives vision in its path. The longer it is channeled, the more damage is dealt.",
+      "name": "Illuminate"
+     },
+     {
+      "description": "A blinding light flashes over the targeted area, knocking back units to the edge of the area and blinding them, causing them to miss some attacks. Minimum knockback distance is 175 range over 0.6 seconds.",
+      "name": "Blinding Light"
+     },
+     {
+      "description": "Restores mana to the target unit and reduces cooldowns of all basic abilities currently on cooldown by a fixed amount. Is 30% more effective when used on himself.",
+      "name": "Chakra Magic"
+     },
+     {
+      "description": "Weakens an enemy's magical resistance, and applies a slow that increases in strength the more the target moves.",
+      "name": "Solar Bind"
+     },
+     {
+      "description": "Summons Ignis Fatuus at the targeted area. Alternates on and off, drawing enemies closer with its mesmerising flicker.",
+      "name": "Will-O-Wisp"
+     },
+     {
+      "description": "Ezalor temporarily turns his body luminescent, gaining cast range, increasing the speed bonus from Bright Speed, and allows Illuminate to be channeled by a separate spirit and heal allies.",
+      "name": "Spirit Form"
+     },
+     {
+      "description": "Release the channel early.",
+      "name": "Release Illuminate"
+     },
+     {
+      "description": "Keeper of the Light gains 1 movement speed for every 2.5 Intelligence.\n\nWhenever Keeper of the Light moves 300 distance, he leaves behind light that allows him to see 400 range for 3 seconds.",
+      "name": "Bright Speed"
+     }
+    ],
+    "denies": 4,
+    "final_items": [
+     "Dagon",
+     "Scythe of Vyse",
+     "Black King Bar",
+     "Boots of Travel",
+     "Gem of True Sight",
+     "Octarine Core"
+    ],
+    "gpm": 705,
+    "gpm_percentile": 88.9,
+    "hero": "Keeper of the Light",
+    "hero_damage": 27860,
+    "hero_id": 90,
+    "kda": "5/2/21",
+    "key_item_timings": {
+     "Black King Bar": "34m"
+    },
+    "kill_participation_pct": 76.5,
+    "lane": "Mid lane",
+    "last_hits": 489,
+    "ranked_hero_sample": null,
+    "team": "Radiant",
+    "tower_damage": 773,
+    "xpm": 905
+   },
+   {
+    "cs_at_10": null,
+    "current_abilities": [
+     "Sticky Bomb",
+     "Reactive Tazer",
+     "Blast Off!",
+     "M.A.D.",
+     "Minefield Sign",
+     "Proximity Mines",
+     "Detonate Tazer",
+     "Detonate M.A.D."
+    ],
+    "current_ability_details": [
+     {
+      "description": "Lobs a Sticky Bomb towards the target area. If it lands next to an enemy hero, the bomb will stick to it, slowing its movement speed. After a few seconds the bomb will explode, dealing damage in an area around the detonation and applying a secondary slow for 3 seconds.",
+      "name": "Sticky Bomb"
+     },
+     {
+      "description": "Techies trigger an electric charge on the target ally, giving them bonus movement speed for a short period of time. Enemies attacking the target take damage and are temporarily disarmed and get a Basic Dispel.\n\nAt the end of the effect or if detonated early with the sub-ability, the charge explodes, disarming all enemies within the radius and dealing damage.",
+      "name": "Reactive Tazer"
+     },
+     {
+      "description": "Techies hurtle themselves into the enemy's midst, detonating charges upon impact which deal massive area of effect damage and stun enemies. Upon landing, the assault deals Techies non-lethal damage equal to a percentage of their current health.",
+      "name": "Blast Off!"
+     },
+     {
+      "description": "Techies gain a percentage of their mana pool as bonus mana regeneration.\n\nWhen Techies die, they leave behind a barrel that explodes after 1.5s, damaging enemies in an area around it. Damage is based on Techies' max mana.",
+      "name": "M.A.D."
+     },
+     {
+      "description": "Plant a warning sign, causing Proximity Mines within its radius to be invulnerable and deal 15% more damage. Only one sign can exist at a time. Lasts 240 seconds.\n\nWhen an enemy Hero walks within 200 units of a minefield sign, the 1000 units area around the sign will become a minefield for 10 seconds, dealing damage to enemy Heroes any time they move within its area. Minefield Sign is destroyed after this effect ends.",
+      "name": "Minefield Sign"
+     },
+     {
+      "description": "Plant an invisible mine that cannot be detected by True Sight, but is visible if an enemy is within the active 500 AoE of the mine. Mines detonate if an enemy is standing within the active AoE for 1 seconds dealing damage and temporarily reducing the enemy's Magic Resistance. The explosion deals full damage if the target is within 150 radius and decreases up to 60% on the edge. Deals 30% damage to buildings.",
+      "name": "Proximity Mines"
+     },
+     {
+      "description": "Detonate Reactive Tazer immediately.",
+      "name": "Detonate Tazer"
+     },
+     {
+      "description": "Detonate your planted M.A.D.",
+      "name": "Detonate M.A.D."
+     }
+    ],
+    "denies": 3,
+    "final_items": [
+     "Wind Waker",
+     "Dust of Appearance",
+     "Boots of Travel",
+     "Consecrated Wraps",
+     "Magic Wand",
+     "Gem of True Sight"
+    ],
+    "gpm": 417,
+    "gpm_percentile": 49.4,
+    "hero": "Techies",
+    "hero_damage": 32507,
+    "hero_id": 105,
+    "kda": "6/4/15",
+    "key_item_timings": {},
+    "kill_participation_pct": 61.8,
+    "lane": "Off lane",
+    "last_hits": 85,
+    "ranked_hero_sample": null,
+    "team": "Radiant",
+    "tower_damage": 3522,
+    "xpm": 560
+   },
+   {
+    "cs_at_10": null,
+    "current_abilities": [
+     "Rage",
+     "Open Wounds",
+     "Feast",
+     "Ghoul Frenzy",
+     "Infest",
+     "Consume"
+    ],
+    "current_ability_details": [
+     {
+      "description": "Launch into a maddened rage, becoming Debuff Immune, increasing magic resistance and gaining movement speed.\n\nDISPEL TYPE: Basic Dispel",
+      "name": "Rage"
+     },
+     {
+      "description": "Lifestealer rends an enemy unit, slowing the victim's movement speed and allowing all allies to regain health for a percentage of the damage they deal to that unit. The victim recovers movement speed over the duration.",
+      "name": "Open Wounds"
+     },
+     {
+      "description": "Lifestealer's attacks deal damage and provide heal for a percentage of his target's max health. He gains permanent max HP whenever he kills a unit.",
+      "name": "Feast"
+     },
+     {
+      "description": "Passively grants Lifestealer Attack Speed.",
+      "name": "Ghoul Frenzy"
+     },
+     {
+      "description": "Lifestealer infests the body of a target unit, becoming undetectable, and healing for a portion of his max hitpoints every second while inside. He can then explode from the host body, dealing damage to nearby enemies. If the infested unit is an enemy creep or a neutral creep, he can take control of the unit's ability to move and attack, and the creep loses a portion of their max hitpoints over time. Does not work on enemy heroes.\n\nDISPEL TYPE: Basic Dispel",
+      "name": "Infest"
+     },
+     {
+      "description": "Lifestealer eats the host body from the inside out, exploding from within.",
+      "name": "Consume"
+     }
+    ],
+    "denies": 30,
+    "final_items": [
+     "Phase Boots",
+     "Armlet of Mordiggian",
+     "Overwhelming Blink",
+     "Radiance",
+     "Abyssal Blade",
+     "Sange and Yasha"
+    ],
+    "gpm": 781,
+    "gpm_percentile": 94.1,
+    "hero": "Lifestealer",
+    "hero_damage": 48746,
+    "hero_id": 54,
+    "kda": "16/1/3",
+    "key_item_timings": {
+     "Blink Dagger": "38m"
+    },
+    "kill_participation_pct": 55.9,
+    "lane": "Safe lane",
+    "last_hits": 483,
+    "ranked_hero_sample": null,
+    "team": "Radiant",
+    "tower_damage": 15553,
+    "xpm": 965
+   },
+   {
+    "cs_at_10": null,
+    "current_abilities": [
+     "Summon Wolves",
+     "Howl",
+     "Feral Impulse",
+     "Wolf Bite",
+     "Apex Predator",
+     "Shapeshift"
+    ],
+    "current_ability_details": [
+     {
+      "description": "Summons 2 wolves to aid Lycan in battle. At level 3, wolves gain Permanent Invisibility, and at level 4 wolves gain Cripple that gives 20% chance to cripple the target, causing 8 damage per second and lose 60 attack speed for 4 seconds.",
+      "name": "Summon Wolves"
+     },
+     {
+      "description": "Strikes fear into enemies, reducing armor and attack damage of all enemies within 2000 range of Lycan and his wolves. At night, Howl's armor and attack damage reductions are global.",
+      "name": "Howl"
+     },
+     {
+      "description": "Increases the HP regeneration and damage of Lycan and all units under his control.",
+      "name": "Feral Impulse"
+     },
+     {
+      "description": "Lycan bites an allied hero or creep-hero, granting them Shapeshift properties. Lycan and the bitten target gain 40% Lifesteal and share the healing effect of Lifesteal with each other as long as they are within 1200 range of each other.",
+      "name": "Wolf Bite"
+     },
+     {
+      "description": "Lycan and units he controls deal extra damage to neutral creeps.",
+      "name": "Apex Predator"
+     },
+     {
+      "description": "Lycan assumes his lupine form, granting him critical strikes and added vision at night. During Shapeshift, Lycan moves at increased speed and cannot be slowed. Movement and critical strike bonuses are also applied to all units under Lycan's control.",
+      "name": "Shapeshift"
+     }
+    ],
+    "denies": 14,
+    "final_items": [
+     "Blink Dagger",
+     "Helm of the Overlord",
+     "Nullifier",
+     "Assault Cuirass",
+     "Aghanim's Scepter",
+     "Drum of Endurance"
+    ],
+    "gpm": 627,
+    "gpm_percentile": 79.2,
+    "hero": "Lycan",
+    "hero_damage": 29511,
+    "hero_id": 77,
+    "kda": "6/2/24",
+    "key_item_timings": {
+     "Aghanim's Shard": "16m",
+     "Assault Cuirass": "43m",
+     "Blink Dagger": "30m",
+     "Nullifier": "27m"
+    },
+    "kill_participation_pct": 88.2,
+    "lane": "Off lane",
+    "last_hits": 370,
+    "ranked_hero_sample": null,
+    "team": "Radiant",
+    "tower_damage": 8349,
+    "xpm": 749
+   },
+   {
+    "cs_at_10": null,
+    "current_abilities": [
+     "Poison Touch",
+     "Shallow Grave",
+     "Shadow Wave",
+     "Weave",
+     "Nothl Projection",
+     "End Projection"
+    ],
+    "current_ability_details": [
+     {
+      "description": "Releases a cone of poison that strikes multiple enemy units. Deals damage over time and slows the targets. Anytime the targets get attacked by Dazzle, the debuff duration is refreshed and slow is increased.",
+      "name": "Poison Touch"
+     },
+     {
+      "description": "An ally blessed with Shallow Grave, no matter how close to death, cannot die while under its protection. Healing on that ally is also amplified for the duration based on the hero's HP.",
+      "name": "Shallow Grave"
+     },
+     {
+      "description": "Sends out a bolt of power that arcs between allies, healing them while damaging any enemy units standing nearby. Dazzle is always healed by Shadow Wave.",
+      "name": "Shadow Wave"
+     },
+     {
+      "description": "Dazzle's abilities apply Weave to both allies and enemies they affect, increasing allied armor and reducing enemy armor. Multiple instances of this effect stack.",
+      "name": "Weave"
+     },
+     {
+      "description": "Dazzle departs his body, traveling through the Nothl Realm as an invulnerable spirit that can cast spells, attack, and use items, leaving his body behind in the world with a visible tether. While active, Dazzle's basic abilities are empowered: Poison Touch hexes enemies, Shallow Grave heals upon expiration, and Shadow Wave has a shorter cooldown. The effect can be ended early, and Dazzle returns to the body at the end.",
+      "name": "Nothl Projection"
+     },
+     {
+      "description": "Ends Dazzle's sojourn in the Nothl Realm and returns his spirit to his body.",
+      "name": "End Projection"
+     }
+    ],
+    "denies": 6,
+    "final_items": [
+     "Boots of Speed",
+     "Blink Dagger",
+     "Holy Locket",
+     "Aeon Disk",
+     "Dust of Appearance"
+    ],
+    "gpm": 313,
+    "gpm_percentile": 45.1,
+    "hero": "Dazzle",
+    "hero_damage": 8302,
+    "hero_id": 50,
+    "kda": "1/8/15",
+    "key_item_timings": {
+     "Aeon Disk": "43m",
+     "Blink Dagger": "30m"
+    },
+    "kill_participation_pct": 47.1,
+    "lane": "Safe lane",
+    "last_hits": 45,
+    "ranked_hero_sample": null,
+    "team": "Radiant",
+    "tower_damage": 193,
+    "xpm": 524
+   },
+   {
+    "cs_at_10": null,
+    "current_abilities": [
+     "Dark Pact",
+     "Pounce",
+     "Saltwater Shiv",
+     "Depth Shroud",
+     "Essence Shift",
+     "Shadow Dance"
+    ],
+    "current_ability_details": [
+     {
+      "description": "After a short delay, Slark sacrifices some of his life blood, purging most negative debuffs and dealing damage to enemy units around him and to himself. Slark only takes 30% of the damage.\n\nDISPEL TYPE: Strong Dispel",
+      "name": "Dark Pact"
+     },
+     {
+      "description": "Slark leaps forward, leashing and applying Essence Shift stacks to the first hero he connects. That unit can only move a limited distance away from Slark's landing position.",
+      "name": "Pounce"
+     },
+     {
+      "description": "Slark slices the target with his salty shiv, stealing a portion of the target's movement speed, Health Regen and Health Restoration.\n\nThese effects stack independently.",
+      "name": "Saltwater Shiv"
+     },
+     {
+      "description": "Creates a cloud at the target location. All allies inside the radius are hidden and affected by Shadow Dance.",
+      "name": "Depth Shroud"
+     },
+     {
+      "description": "Slark steals the life essence of enemy heroes with his attacks, draining 1 of each of their attributes and converting them to bonus 3 Agility. If Slark kills an affected enemy hero, he permanently steals 1 Agility.",
+      "name": "Essence Shift"
+     },
+     {
+      "description": "When not visible to the enemy team, Slark passively gains bonus movement speed and health regeneration. If Slark is damaged by a neutral unit, the passive movement and health regeneration bonuses are lost for 2 seconds.\n\nWhen activated, Slark hides himself in a cloud of shadows, becoming immune to detection. Attacking, casting spells, and using items will not reveal Slark, but enemies can see the cloud itself.",
+      "name": "Shadow Dance"
+     }
+    ],
+    "denies": 15,
+    "final_items": [
+     "Diffusal Blade",
+     "Power Treads",
+     "Black King Bar",
+     "Aghanim's Scepter",
+     "Eye of Skadi",
+     "Mage Slayer"
+    ],
+    "gpm": 580,
+    "gpm_percentile": 65.1,
+    "hero": "Slark",
+    "hero_damage": 22268,
+    "hero_id": 93,
+    "kda": "6/4/7",
+    "key_item_timings": {
+     "Aghanim's Shard": "42m",
+     "Black King Bar": "24m",
+     "Eye of Skadi": "32m"
+    },
+    "kill_participation_pct": 76.5,
+    "lane": "Safe lane",
+    "last_hits": 379,
+    "ranked_hero_sample": null,
+    "team": "Dire",
+    "tower_damage": 272,
+    "xpm": 823
+   },
+   {
+    "cs_at_10": null,
+    "current_abilities": [
+     "Crypt Swarm",
+     "Silence",
+     "Spirit Siphon",
+     "Witchcraft",
+     "Exorcism"
+    ],
+    "current_ability_details": [
+     {
+      "description": "Sends a swarm of winged beasts to savage enemy units in front of Death Prophet.",
+      "name": "Crypt Swarm"
+     },
+     {
+      "description": "Fires a projectile that prevents enemy units in a target area from casting spells.",
+      "name": "Silence"
+     },
+     {
+      "description": "Creates a spirit link between Death Prophet and an enemy unit, draining health from the enemy.",
+      "name": "Spirit Siphon"
+     },
+     {
+      "description": "",
+      "name": "Witchcraft"
+     },
+     {
+      "description": "Unleashes evil spirits to drain the life of nearby enemy units and structures. Spirits need to return back to Death Prophet in order to attack again. At the end of the spell's duration, Death Prophet is healed in proportion to the damage dealt. Deals 50% damage to buildings. Lasts 40 seconds.",
+      "name": "Exorcism"
+     }
+    ],
+    "denies": 3,
+    "final_items": [
+     "Eul's Scepter of Divinity",
+     "Black King Bar",
+     "Shiva's Guard",
+     "Boots of Speed",
+     "Greater Healing Lotus",
+     "Blink Dagger"
+    ],
+    "gpm": 390,
+    "gpm_percentile": 20.1,
+    "hero": "Death Prophet",
+    "hero_damage": 20710,
+    "hero_id": 43,
+    "kda": "3/10/4",
+    "key_item_timings": {
+     "Black King Bar": "38m",
+     "Blink Dagger": "25m",
+     "Shiva's Guard": "45m"
+    },
+    "kill_participation_pct": 41.2,
+    "lane": "Safe lane",
+    "last_hits": 195,
+    "ranked_hero_sample": null,
+    "team": "Dire",
+    "tower_damage": 1897,
+    "xpm": 543
+   },
+   {
+    "cs_at_10": null,
+    "current_abilities": [
+     "Vacuum",
+     "Ion Shell",
+     "Surge",
+     "Normal Punch",
+     "Quick Wit",
+     "Wall of Replica"
+    ],
+    "current_ability_details": [
+     {
+      "description": "Dark Seer creates a vacuum over the target area that sucks in enemy units, disrupting them and dealing damage.",
+      "name": "Vacuum"
+     },
+     {
+      "description": "Surrounds the target unit with a bristling shield that damages enemy units in an area around it.",
+      "name": "Ion Shell"
+     },
+     {
+      "description": "Charges a target friendly unit with power, giving it a brief burst of phased movement speed. Allows the unit to reach maximum movement speed and cannot be slowed.",
+      "name": "Surge"
+     },
+     {
+      "description": "Passive ability. Causes Dark Seer's next attack on a hero to have True Strike, knock a replica out of the victim, damaging and stunning them based on how far Dark Seer has moved in the past 3 seconds. Max power is reached after 1100 distance moved.",
+      "name": "Normal Punch"
+     },
+     {
+      "description": "Dark Seer gains 1 Attack Speed from each point of Intelligence.\n\nWhen Dark Seer levels up, he restores a percentage of his max health and mana.",
+      "name": "Quick Wit"
+     },
+     {
+      "description": "Raises a wall of warping light that slows, damages, and creates replicas of any enemy hero who crosses it. Enemy replicas serve at the Dark Seer's will. Replicas last until they are destroyed, or until the wall's duration ends.",
+      "name": "Wall of Replica"
+     }
+    ],
+    "denies": 4,
+    "final_items": [
+     "Shiva's Guard",
+     "Blink Dagger",
+     "Black King Bar",
+     "Arcane Boots",
+     "Aghanim's Scepter",
+     "Helm of the Dominator"
+    ],
+    "gpm": 568,
+    "gpm_percentile": 61.5,
+    "hero": "Dark Seer",
+    "hero_damage": 33977,
+    "hero_id": 55,
+    "kda": "1/6/9",
+    "key_item_timings": {
+     "Aghanim's Shard": "26m",
+     "Black King Bar": "33m",
+     "Blink Dagger": "23m",
+     "Shiva's Guard": "21m"
+    },
+    "kill_participation_pct": 58.8,
+    "lane": "Off lane",
+    "last_hits": 487,
+    "ranked_hero_sample": null,
+    "team": "Dire",
+    "tower_damage": 969,
+    "xpm": 645
+   },
+   {
+    "cs_at_10": null,
+    "current_abilities": [
+     "Shuriken Toss",
+     "Jinada",
+     "Shadow Walk",
+     "Friendly Shadow",
+     "Big Game Hunter",
+     "Track"
+    ],
+    "current_ability_details": [
+     {
+      "description": "Hurls a deadly shuriken at an enemy unit, dealing damage and slowing the target's movement speed. The shuriken will bounce to any Tracked units who are within a 1200 radius of each other.",
+      "name": "Shuriken Toss"
+     },
+     {
+      "description": "Bounty Hunter plans his next hit, dealing bonus damage and stealing some unreliable gold.",
+      "name": "Jinada"
+     },
+     {
+      "description": "Bounty Hunter becomes invisible and gains bonus movement speed and the ability to move through other units until he attacks or casts a spell. If he breaks the invisibility with an attack, that attack will stun the target for a short duration.",
+      "name": "Shadow Walk"
+     },
+     {
+      "description": "Applies Shadow Walk and all of its bonuses to the target ally. Allied fade time is 0.5s. Does not break Bounty Hunter's invisibility when cast.",
+      "name": "Friendly Shadow"
+     },
+     {
+      "description": "Bounty Hunter receives 15% more kill and assist gold if the dying enemy hero is Big Game. An enemy hero is considered Big Game if they are one of the top 3 net worth heroes on the enemy team.",
+      "name": "Big Game Hunter"
+     },
+     {
+      "description": "Tracks an enemy hero, granting True Sight of the target, increasing the damage they take and providing information on how much gold it is carrying. If the target dies, Bounty Hunter and nearby heroes collect a bonus bounty of gold. Casting Track does not take you out of invisibility.",
+      "name": "Track"
+     }
+    ],
+    "denies": 0,
+    "final_items": [
+     "Tranquil Boots",
+     "Magic Wand",
+     "Essence Distiller",
+     "Consecrated Wraps",
+     "Gem of True Sight"
+    ],
+    "gpm": 247,
+    "gpm_percentile": 9.0,
+    "hero": "Bounty Hunter",
+    "hero_damage": 6358,
+    "hero_id": 62,
+    "kda": "1/11/7",
+    "key_item_timings": {
+     "Aghanim's Shard": "39m"
+    },
+    "kill_participation_pct": 47.1,
+    "lane": "Off lane",
+    "last_hits": 11,
+    "ranked_hero_sample": null,
+    "team": "Dire",
+    "tower_damage": 22,
+    "xpm": 399
+   },
+   {
+    "cs_at_10": null,
+    "current_abilities": [
+     "Dragon Slave",
+     "Light Strike Array",
+     "Fiery Soul",
+     "Flame Cloak",
+     "Slow Burn",
+     "Laguna Blade"
+    ],
+    "current_ability_details": [
+     {
+      "description": "Lina channels the breath of a dragon, sending out a wave of fire that scorches every enemy in its path.",
+      "name": "Dragon Slave"
+     },
+     {
+      "description": "Summons a column of flames that damages and stuns enemies.",
+      "name": "Light Strike Array"
+     },
+     {
+      "description": "Grants bonus attack and movement speed each time Lina hits an enemy with a spell. Stacks with itself. Lasts 18 seconds.",
+      "name": "Fiery Soul"
+     },
+     {
+      "description": "Grants Lina unobstructed movement and increases her spell damage and magic resistance. Grants max fiery soul stacks on activation.",
+      "name": "Flame Cloak"
+     },
+     {
+      "description": "Lina's abilities deal an additional 64% damage as burn damage over 4s.",
+      "name": "Slow Burn"
+     },
+     {
+      "description": "Fires off a bolt of lightning at a single enemy unit, dealing massive damage.",
+      "name": "Laguna Blade"
+     }
+    ],
+    "denies": 11,
+    "final_items": [
+     "Yasha and Kaya",
+     "Black King Bar",
+     "Shiva's Guard",
+     "Boots of Travel",
+     "Aghanim's Scepter",
+     "Blink Dagger"
+    ],
+    "gpm": 570,
+    "gpm_percentile": 56.4,
+    "hero": "Lina",
+    "hero_damage": 29614,
+    "hero_id": 25,
+    "kda": "6/4/6",
+    "key_item_timings": {
+     "Black King Bar": "42m",
+     "Blink Dagger": "33m",
+     "Shiva's Guard": "30m"
+    },
+    "kill_participation_pct": 70.6,
+    "lane": "Mid lane",
+    "last_hits": 457,
+    "ranked_hero_sample": null,
+    "team": "Dire",
+    "tower_damage": 1279,
+    "xpm": 675
+   }
+  ],
+  "dire": [
+   "Slark",
+   "Death Prophet",
+   "Dark Seer",
+   "Bounty Hunter",
+   "Lina"
+  ],
+  "radiant": [
+   "Keeper of the Light",
+   "Techies",
+   "Lifestealer",
+   "Lycan",
+   "Dazzle"
+  ],
+  "teamfights": {
+   "available": true,
+   "full_5v5_count": 3,
+   "leaders": {
+    "Dire": {
+     "most_deaths": [
+      {
+       "ability_uses": {
+        "Ion Shell": 8,
+        "Surge": 8,
+        "Vacuum": 4,
+        "Wall of Replica": 1
+       },
+       "buybacks": 1,
+       "damage": 5834,
+       "deaths": 3,
+       "fights_active": 3,
+       "healing": 1185,
+       "hero": "Dark Seer",
+       "hero_kills": 0,
+       "item_uses": {
+        "Arcane Boots": 2,
+        "Blink Dagger": 2,
+        "Jidi Pollen Bag": 3,
+        "Madstone Bundle": 1,
+        "Shiva's Guard": 2
+       },
+       "team": "Dire",
+       "tracked_player": false
+      },
+      {
+       "ability_uses": {
+        "Dark Pact": 9,
+        "Pounce": 6,
+        "Shadow Dance": 3
+       },
+       "buybacks": 2,
+       "damage": 5664,
+       "deaths": 2,
+       "fights_active": 3,
+       "healing": 2911,
+       "hero": "Slark",
+       "hero_kills": 2,
+       "item_uses": {
+        "Black King Bar": 1,
+        "Diffusal Blade": 3,
+        "Magic Wand": 1,
+        "Power Treads": 6,
+        "Town Portal Scroll": 2
+       },
+       "team": "Dire",
+       "tracked_player": false
+      }
+     ],
+     "top_damage": [
+      {
+       "ability_uses": {
+        "Dragon Slave": 11,
+        "Flame Cloak": 2,
+        "Laguna Blade": 2,
+        "Light Strike Array": 7
+       },
+       "buybacks": 1,
+       "damage": 8289,
+       "deaths": 2,
+       "fights_active": 3,
+       "healing": 688,
+       "hero": "Lina",
+       "hero_kills": 1,
+       "item_uses": {
+        "Blink Dagger": 4,
+        "Bottle": 4,
+        "Shiva's Guard": 3,
+        "Town Portal Scroll": 2,
+        "Tumbler's Toy": 1
+       },
+       "team": "Dire",
+       "tracked_player": false
+      },
+      {
+       "ability_uses": {
+        "Crypt Swarm": 5,
+        "Exorcism": 2,
+        "Silence": 4,
+        "Spirit Siphon": 5
+       },
+       "buybacks": 0,
+       "damage": 6788,
+       "deaths": 2,
+       "fights_active": 3,
+       "healing": 2446,
+       "hero": "Death Prophet",
+       "hero_kills": 1,
+       "item_uses": {
+        "Blink Dagger": 3,
+        "Blood Grenade": 1,
+        "Healing Lotus": 2,
+        "Madstone Bundle": 1,
+        "Magic Wand": 1
+       },
+       "team": "Dire",
+       "tracked_player": false
+      }
+     ]
+    },
+    "Radiant": {
+     "most_deaths": [
+      {
+       "ability_uses": {
+        "Blinding Light": 7,
+        "Chakra Magic": 7,
+        "Illuminate": 14,
+        "Release Illuminate": 7,
+        "Solar Bind": 5
+       },
+       "buybacks": 0,
+       "damage": 3256,
+       "deaths": 1,
+       "fights_active": 3,
+       "healing": 6866,
+       "hero": "Keeper of the Light",
+       "hero_kills": 1,
+       "item_uses": {
+        "Ash Legion Shield": 1,
+        "Black King Bar": 1,
+        "Scythe of Vyse": 2,
+        "Spirit Vessel": 4,
+        "Town Portal Scroll": 3
+       },
+       "team": "Radiant",
+       "tracked_player": false
+      },
+      {
+       "ability_uses": {
+        "Blast Off!": 3,
+        "Detonate Tazer": 2,
+        "Proximity Mines": 10,
+        "Reactive Tazer": 7,
+        "Sticky Bomb": 8
+       },
+       "buybacks": 2,
+       "damage": 5657,
+       "deaths": 1,
+       "fights_active": 3,
+       "healing": 1182,
+       "hero": "Techies",
+       "hero_kills": 1,
+       "item_uses": {
+        "Dust of Appearance": 2,
+        "Eul's Scepter of Divinity": 2,
+        "Madstone Bundle": 1,
+        "Magic Wand": 3,
+        "Town Portal Scroll": 2
+       },
+       "team": "Radiant",
+       "tracked_player": true
+      }
+     ],
+     "top_damage": [
+      {
+       "ability_uses": {
+        "Consume": 3,
+        "Infest": 5,
+        "Open Wounds": 4,
+        "Rage": 3,
+        "ability_lamp_use": 2
+       },
+       "buybacks": 0,
+       "damage": 12972,
+       "deaths": 0,
+       "fights_active": 3,
+       "healing": 5290,
+       "hero": "Lifestealer",
+       "hero_kills": 8,
+       "item_uses": {
+        "Armlet of Mordiggian": 17,
+        "Phase Boots": 13,
+        "Town Portal Scroll": 1,
+        "Tumbler's Toy": 2
+       },
+       "team": "Radiant",
+       "tracked_player": false
+      },
+      {
+       "ability_uses": {
+        "Howl": 6,
+        "Shapeshift": 1,
+        "Summon Wolves": 3,
+        "Wolf Bite": 1
+       },
+       "buybacks": 0,
+       "damage": 7137,
+       "deaths": 1,
+       "fights_active": 3,
+       "healing": 2951,
+       "hero": "Lycan",
+       "hero_kills": 0,
+       "item_uses": {
+        "Blink Dagger": 2,
+        "Drum of Endurance": 3,
+        "Nullifier": 7
+       },
+       "team": "Radiant",
+       "tracked_player": false
+      }
+     ]
+    }
+   },
+   "outcome_method": "A teamfight win is determined by which team recorded fewer deaths in that engagement.",
+   "players": [
+    {
+     "ability_uses": {
+      "Blinding Light": 7,
+      "Chakra Magic": 7,
+      "Illuminate": 14,
+      "Release Illuminate": 7,
+      "Solar Bind": 5
+     },
+     "buybacks": 0,
+     "damage": 3256,
+     "deaths": 1,
+     "fights_active": 3,
+     "healing": 6866,
+     "hero": "Keeper of the Light",
+     "hero_kills": 1,
+     "item_uses": {
+      "Ash Legion Shield": 1,
+      "Black King Bar": 1,
+      "Scythe of Vyse": 2,
+      "Spirit Vessel": 4,
+      "Town Portal Scroll": 3
+     },
+     "team": "Radiant",
+     "tracked_player": false
+    },
+    {
+     "ability_uses": {
+      "Blast Off!": 3,
+      "Detonate Tazer": 2,
+      "Proximity Mines": 10,
+      "Reactive Tazer": 7,
+      "Sticky Bomb": 8
+     },
+     "buybacks": 2,
+     "damage": 5657,
+     "deaths": 1,
+     "fights_active": 3,
+     "healing": 1182,
+     "hero": "Techies",
+     "hero_kills": 1,
+     "item_uses": {
+      "Dust of Appearance": 2,
+      "Eul's Scepter of Divinity": 2,
+      "Madstone Bundle": 1,
+      "Magic Wand": 3,
+      "Town Portal Scroll": 2
+     },
+     "team": "Radiant",
+     "tracked_player": true
+    },
+    {
+     "ability_uses": {
+      "Consume": 3,
+      "Infest": 5,
+      "Open Wounds": 4,
+      "Rage": 3,
+      "ability_lamp_use": 2
+     },
+     "buybacks": 0,
+     "damage": 12972,
+     "deaths": 0,
+     "fights_active": 3,
+     "healing": 5290,
+     "hero": "Lifestealer",
+     "hero_kills": 8,
+     "item_uses": {
+      "Armlet of Mordiggian": 17,
+      "Phase Boots": 13,
+      "Town Portal Scroll": 1,
+      "Tumbler's Toy": 2
+     },
+     "team": "Radiant",
+     "tracked_player": false
+    },
+    {
+     "ability_uses": {
+      "Howl": 6,
+      "Shapeshift": 1,
+      "Summon Wolves": 3,
+      "Wolf Bite": 1
+     },
+     "buybacks": 0,
+     "damage": 7137,
+     "deaths": 1,
+     "fights_active": 3,
+     "healing": 2951,
+     "hero": "Lycan",
+     "hero_kills": 0,
+     "item_uses": {
+      "Blink Dagger": 2,
+      "Drum of Endurance": 3,
+      "Nullifier": 7
+     },
+     "team": "Radiant",
+     "tracked_player": false
+    },
+    {
+     "ability_uses": {
+      "End Projection": 2,
+      "Nothl Projection": 2,
+      "Poison Touch": 3,
+      "Shadow Wave": 3,
+      "Shallow Grave": 1
+     },
+     "buybacks": 0,
+     "damage": 3248,
+     "deaths": 1,
+     "fights_active": 3,
+     "healing": 2856,
+     "hero": "Dazzle",
+     "hero_kills": 0,
+     "item_uses": {
+      "Blink Dagger": 1,
+      "Dust of Appearance": 1,
+      "Holy Locket": 1,
+      "Sentry Ward": 1
+     },
+     "team": "Radiant",
+     "tracked_player": false
+    },
+    {
+     "ability_uses": {
+      "Dark Pact": 9,
+      "Pounce": 6,
+      "Shadow Dance": 3
+     },
+     "buybacks": 2,
+     "damage": 5664,
+     "deaths": 2,
+     "fights_active": 3,
+     "healing": 2911,
+     "hero": "Slark",
+     "hero_kills": 2,
+     "item_uses": {
+      "Black King Bar": 1,
+      "Diffusal Blade": 3,
+      "Magic Wand": 1,
+      "Power Treads": 6,
+      "Town Portal Scroll": 2
+     },
+     "team": "Dire",
+     "tracked_player": false
+    },
+    {
+     "ability_uses": {
+      "Crypt Swarm": 5,
+      "Exorcism": 2,
+      "Silence": 4,
+      "Spirit Siphon": 5
+     },
+     "buybacks": 0,
+     "damage": 6788,
+     "deaths": 2,
+     "fights_active": 3,
+     "healing": 2446,
+     "hero": "Death Prophet",
+     "hero_kills": 1,
+     "item_uses": {
+      "Blink Dagger": 3,
+      "Blood Grenade": 1,
+      "Healing Lotus": 2,
+      "Madstone Bundle": 1,
+      "Magic Wand": 1
+     },
+     "team": "Dire",
+     "tracked_player": false
+    },
+    {
+     "ability_uses": {
+      "Ion Shell": 8,
+      "Surge": 8,
+      "Vacuum": 4,
+      "Wall of Replica": 1
+     },
+     "buybacks": 1,
+     "damage": 5834,
+     "deaths": 3,
+     "fights_active": 3,
+     "healing": 1185,
+     "hero": "Dark Seer",
+     "hero_kills": 0,
+     "item_uses": {
+      "Arcane Boots": 2,
+      "Blink Dagger": 2,
+      "Jidi Pollen Bag": 3,
+      "Madstone Bundle": 1,
+      "Shiva's Guard": 2
+     },
+     "team": "Dire",
+     "tracked_player": false
+    },
+    {
+     "ability_uses": {
+      "Shadow Walk": 6,
+      "Shuriken Toss": 6,
+      "Track": 8
+     },
+     "buybacks": 0,
+     "damage": 1618,
+     "deaths": 1,
+     "fights_active": 3,
+     "healing": 1080,
+     "hero": "Bounty Hunter",
+     "hero_kills": 0,
+     "item_uses": {
+      "Blood Grenade": 1,
+      "Essence Distiller": 2,
+      "Pollywog Charm": 1,
+      "Town Portal Scroll": 2,
+      "Urn of Shadows": 1
+     },
+     "team": "Dire",
+     "tracked_player": false
+    },
+    {
+     "ability_uses": {
+      "Dragon Slave": 11,
+      "Flame Cloak": 2,
+      "Laguna Blade": 2,
+      "Light Strike Array": 7
+     },
+     "buybacks": 1,
+     "damage": 8289,
+     "deaths": 2,
+     "fights_active": 3,
+     "healing": 688,
+     "hero": "Lina",
+     "hero_kills": 1,
+     "item_uses": {
+      "Blink Dagger": 4,
+      "Bottle": 4,
+      "Shiva's Guard": 3,
+      "Town Portal Scroll": 2,
+      "Tumbler's Toy": 1
+     },
+     "team": "Dire",
+     "tracked_player": false
+    }
+   ],
+   "recorded_engagements": 3,
+   "teams": {
+    "Dire": {
+     "buybacks": 4,
+     "damage": 28193,
+     "deaths": 10,
+     "healing": 8310,
+     "kills": 4,
+     "losses": 3,
+     "ties": 0,
+     "wins": 0
+    },
+    "Radiant": {
+     "buybacks": 2,
+     "damage": 32270,
+     "deaths": 4,
+     "healing": 19145,
+     "kills": 10,
+     "losses": 0,
+     "ties": 0,
+     "wins": 3
+    }
+   }
+  },
+  "tracked_players": [
+   {
+    "cs_at_10": null,
+    "current_abilities": [
+     "Sticky Bomb",
+     "Reactive Tazer",
+     "Blast Off!",
+     "M.A.D.",
+     "Minefield Sign",
+     "Proximity Mines",
+     "Detonate Tazer",
+     "Detonate M.A.D."
+    ],
+    "current_ability_details": [
+     {
+      "description": "Lobs a Sticky Bomb towards the target area. If it lands next to an enemy hero, the bomb will stick to it, slowing its movement speed. After a few seconds the bomb will explode, dealing damage in an area around the detonation and applying a secondary slow for 3 seconds.",
+      "name": "Sticky Bomb"
+     },
+     {
+      "description": "Techies trigger an electric charge on the target ally, giving them bonus movement speed for a short period of time. Enemies attacking the target take damage and are temporarily disarmed and get a Basic Dispel.\n\nAt the end of the effect or if detonated early with the sub-ability, the charge explodes, disarming all enemies within the radius and dealing damage.",
+      "name": "Reactive Tazer"
+     },
+     {
+      "description": "Techies hurtle themselves into the enemy's midst, detonating charges upon impact which deal massive area of effect damage and stun enemies. Upon landing, the assault deals Techies non-lethal damage equal to a percentage of their current health.",
+      "name": "Blast Off!"
+     },
+     {
+      "description": "Techies gain a percentage of their mana pool as bonus mana regeneration.\n\nWhen Techies die, they leave behind a barrel that explodes after 1.5s, damaging enemies in an area around it. Damage is based on Techies' max mana.",
+      "name": "M.A.D."
+     },
+     {
+      "description": "Plant a warning sign, causing Proximity Mines within its radius to be invulnerable and deal 15% more damage. Only one sign can exist at a time. Lasts 240 seconds.\n\nWhen an enemy Hero walks within 200 units of a minefield sign, the 1000 units area around the sign will become a minefield for 10 seconds, dealing damage to enemy Heroes any time they move within its area. Minefield Sign is destroyed after this effect ends.",
+      "name": "Minefield Sign"
+     },
+     {
+      "description": "Plant an invisible mine that cannot be detected by True Sight, but is visible if an enemy is within the active 500 AoE of the mine. Mines detonate if an enemy is standing within the active AoE for 1 seconds dealing damage and temporarily reducing the enemy's Magic Resistance. The explosion deals full damage if the target is within 150 radius and decreases up to 60% on the edge. Deals 30% damage to buildings.",
+      "name": "Proximity Mines"
+     },
+     {
+      "description": "Detonate Reactive Tazer immediately.",
+      "name": "Detonate Tazer"
+     },
+     {
+      "description": "Detonate your planted M.A.D.",
+      "name": "Detonate M.A.D."
+     }
+    ],
+    "denies": 3,
+    "final_items": [
+     "Wind Waker",
+     "Dust of Appearance",
+     "Boots of Travel",
+     "Consecrated Wraps",
+     "Magic Wand",
+     "Gem of True Sight"
+    ],
+    "gpm": 417,
+    "gpm_percentile": 49.4,
+    "hero": "Techies",
+    "hero_damage": 32507,
+    "hero_id": 105,
+    "kda": "6/4/15",
+    "key_item_timings": {},
+    "kill_participation_pct": 61.8,
+    "lane": "Off lane",
+    "last_hits": 85,
+    "ranked_hero_sample": null,
+    "team": "Radiant",
+    "tower_damage": 3522,
+    "xpm": 560
+   }
+  ]
+ },
+ "empty_teamfights": {
+  "available": false,
+  "reason": "OpenDota teamfight telemetry is unavailable."
+ },
+ "item_catalog_size": 18,
+ "no_full_5v5": {
+  "available": true,
+  "full_5v5_count": 0,
+  "players": [],
+  "recorded_engagements": 0,
+  "teams": {
+   "Dire": {
+    "buybacks": 0,
+    "damage": 0,
+    "deaths": 0,
+    "healing": 0,
+    "kills": 0,
+    "losses": 0,
+    "ties": 0,
+    "wins": 0
+   },
+   "Radiant": {
+    "buybacks": 0,
+    "damage": 0,
+    "deaths": 0,
+    "healing": 0,
+    "kills": 0,
+    "losses": 0,
+    "ties": 0,
+    "wins": 0
+   }
+  }
+ },
+ "panel": "\u2728 **MATCH HIGHLIGHTS**\n- **Result:** Radiant **34-17** in **47 min**.\n- **Team 5v5s:** Radiant **3W\u20130L** by death differential across **3 full fights**; team damage 32,270 vs 28,193.\n\n\ud83d\udcca **VERIFIED OPENDOTA FACTS \u2014 NOT AI INTERPRETATION**\n- **Result:** Radiant won **34-17** in 47 minutes.\n- Match patch: **7.41**. Current hero/item/ability reference data: **patch 7.41** (OpenDota constants, refreshed periodically).\n- Radiant roster: Keeper of the Light, Techies, Lifestealer, Lycan, Dazzle.\n- Dire roster: Slark, Death Prophet, Dark Seer, Bounty Hunter, Lina.\n- **Teamfight sample:** 3 recorded engagements; **3** had activity from all 10 players. Full 5v5 result is counted by fewer deaths in each event.\n  - **Radiant: 3 wins, 0 losses, 0 ties; hero kills 10, deaths 4, damage 32,270, healing 19,145, buybacks 2.**\n    Top recorded damage: **Lifestealer 12,972, Lycan 7,137**; most recorded deaths: **Keeper of the Light 1, Techies 1**.\n  - **Dire: 0 wins, 3 losses, 0 ties; hero kills 4, deaths 10, damage 28,193, healing 8,310, buybacks 4.**\n    Top recorded damage: **Lina 8,289, Death Prophet 6,788**; most recorded deaths: **Dark Seer 3, Slark 2**.\n- **Tracked player Techies in full 5v5s:** active in **3/3**; damage 5,657; deaths 1; recorded ability uses: Proximity Mines 10, Sticky Bomb 8, Reactive Tazer 7, Blast Off! 3, Detonate Tazer 2; recorded item uses: Magic Wand 3, Dust of Appearance 2, Town Portal Scroll 2, Eul's Scepter of Divinity 2, Madstone Bundle 1.\n- **Gold lead samples:** **10m Radiant +663**; **20m Radiant +3,171**; **30m Radiant +3,094**; **40m Radiant +7,267**.\n- Player stats, final inventories, and recorded key-item purchase times:\n  - Radiant Keeper of the Light (Mid lane): KDA 5/2/21; LH 489; denies 4; GPM 705, GPM percentile 88.9%; XPM 905; hero damage 27860; tower damage 773; final items: Dagon, Scythe of Vyse, Black King Bar, Boots of Travel, Gem of True Sight, Octarine Core; key timings: Black King Bar 34m.\n  - **Radiant Techies (TRACKED PLAYER)** (Off lane): KDA **6/4/15**; LH **85**; denies 3; GPM **417**, GPM percentile 49.4%; XPM **560**; hero damage 32507; tower damage 3522; final items: Wind Waker, Dust of Appearance, Boots of Travel, Consecrated Wraps, Magic Wand, Gem of True Sight; key timings: **none in tracked timing list**.\n  - Radiant Lifestealer (Safe lane): KDA 16/1/3; LH 483; denies 30; GPM 781, GPM percentile 94.1%; XPM 965; hero damage 48746; tower damage 15553; final items: Phase Boots, Armlet of Mordiggian, Overwhelming Blink, Radiance, Abyssal Blade, Sange and Yasha; key timings: Blink Dagger 38m.\n  - Radiant Lycan (Off lane): KDA 6/2/24; LH 370; denies 14; GPM 627, GPM percentile 79.2%; XPM 749; hero damage 29511; tower damage 8349; final items: Blink Dagger, Helm of the Overlord, Nullifier, Assault Cuirass, Aghanim's Scepter, Drum of Endurance; key timings: Aghanim's Shard 16m, Nullifier 27m, Blink Dagger 30m, Assault Cuirass 43m.\n  - Radiant Dazzle (Safe lane): KDA 1/8/15; LH 45; denies 6; GPM 313, GPM percentile 45.1%; XPM 524; hero damage 8302; tower damage 193; final items: Boots of Speed, Blink Dagger, Holy Locket, Aeon Disk, Dust of Appearance; key timings: Blink Dagger 30m, Aeon Disk 43m.\n  - Dire Slark (Safe lane): KDA 6/4/7; LH 379; denies 15; GPM 580, GPM percentile 65.1%; XPM 823; hero damage 22268; tower damage 272; final items: Diffusal Blade, Power Treads, Black King Bar, Aghanim's Scepter, Eye of Skadi, Mage Slayer; key timings: Black King Bar 24m, Eye of Skadi 32m, Aghanim's Shard 42m.\n  - Dire Death Prophet (Safe lane): KDA 3/10/4; LH 195; denies 3; GPM 390, GPM percentile 20.1%; XPM 543; hero damage 20710; tower damage 1897; final items: Eul's Scepter of Divinity, Black King Bar, Shiva's Guard, Boots of Speed, Greater Healing Lotus, Blink Dagger; key timings: Blink Dagger 25m, Black King Bar 38m, Shiva's Guard 45m.\n  - Dire Dark Seer (Off lane): KDA 1/6/9; LH 487; denies 4; GPM 568, GPM percentile 61.5%; XPM 645; hero damage 33977; tower damage 969; final items: Shiva's Guard, Blink Dagger, Black King Bar, Arcane Boots, Aghanim's Scepter, Helm of the Dominator; key timings: Shiva's Guard 21m, Blink Dagger 23m, Aghanim's Shard 26m, Black King Bar 33m.\n  - Dire Bounty Hunter (Off lane): KDA 1/11/7; LH 11; denies 0; GPM 247, GPM percentile 9.0%; XPM 399; hero damage 6358; tower damage 22; final items: Tranquil Boots, Magic Wand, Essence Distiller, Consecrated Wraps, Gem of True Sight; key timings: Aghanim's Shard 39m.\n  - Dire Lina (Mid lane): KDA 6/4/6; LH 457; denies 11; GPM 570, GPM percentile 56.4%; XPM 675; hero damage 29614; tower damage 1279; final items: Yasha and Kaya, Black King Bar, Shiva's Guard, Boots of Travel, Aghanim's Scepter, Blink Dagger; key timings: Shiva's Guard 30m, Blink Dagger 33m, Black King Bar 42m.\n- CS@10: unavailable in the OpenDota match response for the tracked player.\n- Same-patch ranked hero baseline for Techies: unavailable.\nAI coaching text follows; it contains interpretations, not verified match facts.",
+ "panel_chunks": [
+  "\u2728 **MATCH HIGHLIGHTS**\n- **Result:** Radiant **34-17** in **47 min**.\n- **Team 5v5s:** Radiant **3W\u20130L** by death differential across **3 full fights**; team damage 32,270 vs 28,193.",
+  "\ud83d\udcca **VERIFIED OPENDOTA FACTS \u2014 NOT AI INTERPRETATION**\n- **Result:** Radiant won **34-17** in 47 minutes.\n- Match patch: **7.41**. Current hero/item/ability reference data: **patch 7.41** (OpenDota constants, refreshed periodically).\n- Radiant roster: Keeper of the Light, Techies, Lifestealer, Lycan, Dazzle.\n- Dire roster: Slark, Death Prophet, Dark Seer, Bounty Hunter, Lina.\n- **Teamfight sample:** 3 recorded engagements; **3** had activity from all 10 players. Full 5v5 result is counted by fewer deaths in each event.\n  - **Radiant: 3 wins, 0 losses, 0 ties; hero kills 10, deaths 4, damage 32,270, healing 19,145, buybacks 2.**\n    Top recorded damage: **Lifestealer 12,972, Lycan 7,137**; most recorded deaths: **Keeper of the Light 1, Techies 1**.\n  - **Dire: 0 wins, 3 losses, 0 ties; hero kills 4, deaths 10, damage 28,193, healing 8,310, buybacks 4.**\n    Top recorded damage: **Lina 8,289, Death Prophet 6,788**; most recorded deaths: **Dark Seer 3, Slark 2**.\n- **Tracked player Techies in full 5v5s:** active in **3/3**; damage 5,657; deaths 1; recorded ability uses: Proximity Mines 10, Sticky Bomb 8, Reactive Tazer 7, Blast Off! 3, Detonate Tazer 2; recorded item uses: Magic Wand 3, Dust of Appearance 2, Town Portal Scroll 2, Eul's Scepter of Divinity 2, Madstone Bundle 1.\n- **Gold lead samples:** **10m Radiant +663**; **20m Radiant +3,171**; **30m Radiant +3,094**; **40m Radiant +7,267**.\n- Player stats, final inventories, and recorded key-item purchase times:\n  - Radiant Keeper of the Light (Mid lane): KDA 5/2/21; LH 489; denies 4; GPM 705, GPM percentile 88.9%; XPM 905; hero damage 27860; tower damage 773; final items: Dagon, Scythe of Vyse, Black King Bar, Boots of Travel, Gem of True Sight, Octarine Core; key timings: Black King Bar 34m.\n  - **Radiant Techies (TRACKED PLAYER)** (Off lane): KDA **6/4/15**; LH **85**; denies 3; GPM **417**, GPM percentile 49.4%; XPM **560**; hero damage 32507; tower damage 3522; final items: Wind Waker, Dust of Appearance, Boots of Travel, Consecrated Wraps, Magic Wand, Gem of True Sight; key timings: **none in tracked timing list**.\n  - Radiant Lifestealer (Safe lane): KDA 16/1/3; LH 483; denies 30; GPM 781, GPM percentile 94.1%; XPM 965; hero damage 48746; tower damage 15553; final items: Phase Boots, Armlet of Mordiggian, Overwhelming Blink, Radiance, Abyssal Blade, Sange and Yasha; key timings: Blink Dagger 38m.\n  - Radiant Lycan (Off lane): KDA 6/2/24; LH 370; denies 14; GPM 627, GPM percentile 79.2%; XPM 749; hero damage 29511; tower damage 8349; final items: Blink Dagger, Helm of the Overlord, Nullifier, Assault Cuirass, Aghanim's Scepter, Drum of Endurance; key timings: Aghanim's Shard 16m, Nullifier 27m, Blink Dagger 30m, Assault Cuirass 43m.\n  - Radiant Dazzle (Safe lane): KDA 1/8/15; LH 45; denies 6; GPM 313, GPM percentile 45.1%; XPM 524; hero damage 8302; tower damage 193; final items: Boots of Speed, Blink Dagger, Holy Locket, Aeon Disk, Dust of Appearance; key timings: Blink Dagger 30m, Aeon Disk 43m.\n  - Dire Slark (Safe lane): KDA 6/4/7; LH 379; denies 15; GPM 580, GPM percentile 65.1%; XPM 823; hero damage 22268; tower damage 272; final items: Diffusal Blade, Power Treads, Black King Bar, Aghanim's Scepter, Eye of Skadi, Mage Slayer; key timings: Black King Bar 24m, Eye of Skadi 32m, Aghanim's Shard 42m.\n  - Dire Death Prophet (Safe lane): KDA 3/10/4; LH 195; denies 3; GPM 390, GPM percentile 20.1%; XPM 543; hero damage 20710; tower damage 1897; final items: Eul's Scepter of Divinity, Black King Bar, Shiva's Guard, Boots of Speed, Greater Healing Lotus, Blink Dagger; key timings: Blink Dagger 25m, Black King Bar 38m, Shiva's Guard 45m.\n  - Dire Dark Seer (Off lane): KDA 1/6/9; LH 487; denies 4; GPM 568, GPM percentile 61.5%; XPM 645; hero damage 33977; tower damage 969; final",
+  "items: Shiva's Guard, Blink Dagger, Black King Bar, Arcane Boots, Aghanim's Scepter, Helm of the Dominator; key timings: Shiva's Guard 21m, Blink Dagger 23m, Aghanim's Shard 26m, Black King Bar 33m.\n  - Dire Bounty Hunter (Off lane): KDA 1/11/7; LH 11; denies 0; GPM 247, GPM percentile 9.0%; XPM 399; hero damage 6358; tower damage 22; final items: Tranquil Boots, Magic Wand, Essence Distiller, Consecrated Wraps, Gem of True Sight; key timings: Aghanim's Shard 39m.\n  - Dire Lina (Mid lane): KDA 6/4/6; LH 457; denies 11; GPM 570, GPM percentile 56.4%; XPM 675; hero damage 29614; tower damage 1279; final items: Yasha and Kaya, Black King Bar, Shiva's Guard, Boots of Travel, Aghanim's Scepter, Blink Dagger; key timings: Shiva's Guard 30m, Blink Dagger 33m, Black King Bar 42m.\n- CS@10: unavailable in the OpenDota match response for the tracked player.\n- Same-patch ranked hero baseline for Techies: unavailable.\nAI coaching text follows; it contains interpretations, not verified match facts."
+ ],
+ "tracked_steam_ids": [
+  9403474
+ ]
+}
