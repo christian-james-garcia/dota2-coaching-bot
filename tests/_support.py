@@ -155,12 +155,44 @@ def _install_stubs():
     discord.Color = types.SimpleNamespace(purple=lambda: None)
     discord.DiscordException = type("DiscordException", (Exception,), {})
 
+    app_commands = types.ModuleType("discord.app_commands")
+
+    def _describe(**kwargs):
+        def annotate(fn):
+            return fn
+        return annotate
+
+    app_commands.describe = _describe
+    app_commands.command = _describe
+    discord.app_commands = app_commands
+    sys.modules["discord.app_commands"] = app_commands
+
     ext = types.ModuleType("discord.ext")
     commands = types.ModuleType("discord.ext.commands")
 
+    class CommandTree:
+        """Records registered app commands and keeps them callable for tests."""
+
+        def __init__(self):
+            self.registered = []
+            self.synced = 0
+
+        def command(self, **options):
+            def register(fn):
+                self.registered.append((options, fn))
+                return fn
+            return register
+
+        def add_command(self, command):
+            self.registered.append(({}, command))
+
+        async def sync(self, guild=None):
+            self.synced += 1
+            return [fn for _, fn in self.registered]
+
     class Bot:
         def __init__(self, *a, **k):
-            pass
+            self.tree = CommandTree()
 
         def event(self, fn):
             return fn

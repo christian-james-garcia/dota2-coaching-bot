@@ -10,7 +10,7 @@ import asyncio
 import pathlib
 import tempfile
 
-from _support import delivery_module, main_module, state_module
+from _support import delivery_module, main_module, opendota_module, state_module
 
 
 class _Author:
@@ -166,3 +166,39 @@ def test_send_debrief_records_the_account_for_later_recovery():
     channel = _Collect()
     _run(delivery.send_debrief(channel, 4242, "a short debrief", 99))
     assert delivery.read_delivery(channel.sent[0]) == (4242, 99)
+
+
+def test_the_response_cache_returns_what_was_stored():
+    cache = opendota_module().ResponseCache(ttl_seconds=60, max_entries=4)
+    assert cache.get("a") is None
+    cache.put("a", {"match": 1})
+    assert cache.get("a") == {"match": 1}
+    assert cache.hits == 1 and cache.misses == 1
+
+
+def test_the_response_cache_expires_entries():
+    cache = opendota_module().ResponseCache(ttl_seconds=-1, max_entries=4)
+    cache.put("a", 1)
+    assert cache.get("a") is None
+    assert len(cache) == 0, "an expired entry should be dropped, not kept"
+
+
+def test_the_response_cache_evicts_oldest_first():
+    cache = opendota_module().ResponseCache(ttl_seconds=60, max_entries=2)
+    cache.put("a", 1)
+    cache.put("b", 2)
+    cache.put("c", 3)
+    assert len(cache) == 2
+    assert cache.get("a") is None
+    assert cache.get("b") == 2 and cache.get("c") == 3
+
+
+def test_re_putting_a_key_refreshes_its_position():
+    cache = opendota_module().ResponseCache(ttl_seconds=60, max_entries=2)
+    cache.put("a", 1)
+    cache.put("b", 2)
+    cache.put("a", 11)
+    cache.put("c", 3)
+    # "b" is now the oldest, so "a" must survive.
+    assert cache.get("a") == 11
+    assert cache.get("b") is None

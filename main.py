@@ -27,6 +27,30 @@ from opendota import add_ranked_context, discover_unseen_matches, fetch_parsed_m
 from reporting import report_unexpected
 from state import MatchState
 
+async def build_debrief(session, game, match_id: int, tracked_ids,
+                        llm_api_key, groq_api_key):
+    """The whole pipeline for one match: (text, None) or (None, why not).
+
+    Shared by the polling loop and the on-demand command so there is one
+    ordering of these steps rather than two that can drift.
+    """
+    match_data = await fetch_parsed_match(session, match_id)
+    if not match_data:
+        return None, "OpenDota match data unavailable"
+
+    await add_ranked_context(session, match_data, game, tracked_ids)
+    analysis = build_match_analysis(match_data, game, tracked_ids)
+
+    debrief_text = await generate_ai_coaching_debrief(
+        match_data, analysis, game, llm_api_key, groq_api_key
+    )
+    if not debrief_text:
+        return None, "AI providers unavailable"
+
+    verified_facts = build_verified_match_facts(match_data, analysis, game)
+    return f"{verified_facts}\n\n---\n\n{debrief_text}", None
+
+
 intents = discord.Intents.default()
 # Message content intent is not needed because this bot defines no prefix commands.
 
@@ -53,6 +77,11 @@ class CoachingBot(commands.Bot):
             await start_web_server()
         except OSError as exc:
             print(f"[SERVER] Could not start health endpoint: {exc}", flush=True)
+        try:
+            await self.tree.sync()
+            print("[BOT] Slash commands synced.", flush=True)
+        except discord.DiscordException as exc:
+            print(f"[BOT] Could not sync slash commands: {exc}", flush=True)
 
     async def on_ready(self):
         print(f"[BOT] Logged in as {self.user} (ID: {self.user.id})", flush=True)
@@ -104,31 +133,39 @@ class CoachingBot(commands.Bot):
 
     async def deliver(self, session, channel, account_id, match_id):
         """Take one queued match all the way to Discord, or defer it."""
-        match_data = await fetch_parsed_match(session, match_id)
-        if not match_data:
-            print(f"[RETRY] Match {match_id} is not ready; will retry next cycle.", flush=True)
-            self.state.defer(account_id, match_id, "OpenDota match data unavailable")
+        text, failure = await build_debrief(
+            session, self.game, match_id, TRACKED_STEAM_IDS, LLM_API_KEY, GROQ_API_KEY
+        )
+        if text is None:
+            print(f"[RETRY] Match {match_id} not delivered: {failure}.", flush=True)
+            self.state.defer(account_id, match_id, failure)
             return
 
-        await add_ranked_context(session, match_data, self.game, TRACKED_STEAM_IDS)
-        analysis = build_match_analysis(match_data, self.game, TRACKED_STEAM_IDS)
-
-        debrief_text = await generate_ai_coaching_debrief(
-            match_data, analysis, self.game, LLM_API_KEY, GROQ_API_KEY
-        )
-        if not debrief_text:
-            print(f"[RETRY] AI providers failed for match {match_id}; will retry next cycle.", flush=True)
-            self.state.defer(account_id, match_id, "AI providers unavailable")
-            return
-
-        verified_facts = build_verified_match_facts(match_data, analysis, self.game)
-        await send_debrief(
-            channel, match_id, f"{verified_facts}\n\n---\n\n{debrief_text}", account_id
-        )
+        await send_debrief(channel, match_id, text, account_id)
 
         # Only now: a failure above leaves the match queued for a full re-send.
         self.state.complete(account_id, match_id)
         print(f"[QUEUE] Successfully delivered match {match_id}.", flush=True)
+
+    async def debrief_on_demand(self, match_id: int):
+        """Build and post a debrief for any match id, outside the queue.
+
+        Deliberately does not touch the queue: asking for an old match should
+        not move a cursor, and asking for a queued one should not mark it
+        delivered, because the queue will send it with its own account label.
+        """
+        timeout = aiohttp.ClientTimeout(total=120)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            text, failure = await build_debrief(
+                session, self.game, match_id, TRACKED_STEAM_IDS, LLM_API_KEY, GROQ_API_KEY
+            )
+        if text is None:
+            return f"Could not build a debrief for match {match_id}: {failure}."
+        channel = await self.resolve_channel()
+        if channel is None:
+            return "Could not reach the debrief channel."
+        parts = await send_debrief(channel, match_id, text)
+        return f"Posted the debrief for match {match_id} in {parts} message(s)."
 
     @tasks.loop(minutes=3)
     async def poll_matches(self):
@@ -169,6 +206,29 @@ class CoachingBot(commands.Bot):
 
 
 bot = CoachingBot(command_prefix="!", intents=intents)
+
+
+@bot.tree.command(name="debrief", description="Post the coaching debrief for a Dota 2 match id")
+@discord.app_commands.describe(match_id="OpenDota match id, as shown in a debrief title")
+async def debrief_command(interaction, match_id: str):
+    """Slash command wrapper. Slash commands need no message content intent."""
+    try:
+        parsed_id = int(match_id.strip())
+    except (AttributeError, ValueError):
+        await interaction.response.send_message(
+            f"{match_id!r} is not a match id.", ephemeral=True
+        )
+        return
+    # Building a debrief takes longer than Discord's reply window allows.
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    try:
+        result = await bot.debrief_on_demand(parsed_id)
+    except TRANSIENT_ERRORS as exc:
+        result = f"A service failed while building that debrief: {exc}"
+    except Exception as exc:
+        report_unexpected(f"on-demand debrief for match {parsed_id}", exc)
+        result = "Something went wrong building that debrief; the log has the details."
+    await interaction.followup.send(result, ephemeral=True)
 
 
 if __name__ == "__main__":

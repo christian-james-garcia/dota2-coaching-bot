@@ -46,9 +46,19 @@ This was the main design problem, and most of the code exists to solve it:
 - **Exponential backoff.** A match that fails (unparsed data, provider outage, Discord error) is deferred
   60s → 2m → 4m … capped at 32 minutes, and later matches keep moving.
 - **Delete-after-delivery.** A match leaves the queue only once every embed part is accepted by Discord.
+- **Parsed matches are cached.** A parsed match never changes, so a deferred match retried later is
+  rebuilt from cache instead of re-downloading a few hundred kilobytes.
 - **Provider fallback.** Google AI Studio (`gemini-3.8-flash`, then `gemini-3.5-flash-lite`), then Groq
   (`openai/gpt-oss-120b`).
 - **Chunked output.** Debriefs are split to stay under Discord's embed description limit.
+
+## Commands
+
+`/debrief match_id:<id>` posts the debrief for any match, including one already delivered or older
+than the tracked window. It replies privately and leaves the queue untouched, so asking for an old
+match does not move a cursor and asking for a queued one does not mark it delivered.
+
+Slash commands need no message content intent. They are synced on startup.
 
 ## Setup
 
@@ -133,8 +143,8 @@ them and 23 of the 48 fail.
 - [x] Regression tests for the fixed bugs, with a dependency-free runner and CI
 - [ ] Widen coverage: hand-audited `summarize_teamfights` totals, full `extract_match_telemetry` cases
 - [x] Bound the match-history scan so an old cursor cannot walk the whole history
-- [ ] Cache OpenDota responses to reduce calls against the public rate limit
-- [ ] Slash commands for on-demand debriefs of a given match id
+- [x] Cache parsed matches so a retry does not re-download one
+- [x] Slash command for on-demand debriefs of a given match id
 - [ ] Widen validation beyond team labels to item and ability claims
 
 ## Data and privacy

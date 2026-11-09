@@ -18,13 +18,56 @@ from config import (
     RANKED_DETAIL_SAMPLE_LIMIT,
     RANKED_MATCH_SCAN_MAX_PAGES,
     RANKED_MATCH_SCAN_PAGE_SIZE,
+    PARSED_MATCH_CACHE_ENTRIES,
+    PARSED_MATCH_CACHE_SECONDS,
     RANKED_SAMPLE_CACHE_SECONDS,
     TRANSIENT_ERRORS,
 )
 from gamedata import GameData
 from reporting import report_unexpected
 
+class ResponseCache:
+    """A small time-bounded cache for responses that do not change.
+
+    OpenDota's public API is unauthenticated and rate limited, and a match that
+    has been parsed is immutable, so re-fetching one on a retry spends a request
+    to receive the same bytes. Eviction is oldest-first and the only reason for
+    the TTL is to bound memory, not staleness.
+    """
+
+    def __init__(self, ttl_seconds: int, max_entries: int):
+        self.ttl_seconds = ttl_seconds
+        self.max_entries = max_entries
+        self._entries = {}
+        self.hits = 0
+        self.misses = 0
+
+    def get(self, key):
+        stored = self._entries.get(key)
+        if stored is None:
+            self.misses += 1
+            return None
+        stored_at, value = stored
+        if time.time() - stored_at > self.ttl_seconds:
+            del self._entries[key]
+            self.misses += 1
+            return None
+        self.hits += 1
+        return value
+
+    def put(self, key, value) -> None:
+        if key in self._entries:
+            del self._entries[key]
+        self._entries[key] = (time.time(), value)
+        while len(self._entries) > self.max_entries:
+            self._entries.pop(next(iter(self._entries)))
+
+    def __len__(self):
+        return len(self._entries)
+
+
 _RANKED_SAMPLE_CACHE = {}
+_PARSED_MATCH_CACHE = ResponseCache(PARSED_MATCH_CACHE_SECONDS, PARSED_MATCH_CACHE_ENTRIES)
 
 
 async def fetch_opendota_match(session: aiohttp.ClientSession, match_id: int):
@@ -61,7 +104,17 @@ def match_has_parsed_player_data(match_data: Optional[dict]) -> bool:
 
 
 async def fetch_parsed_match(session: aiohttp.ClientSession, match_id: int):
-    """Request parsing, then poll with a bounded wait instead of a fixed sleep."""
+    """Request parsing, then poll with a bounded wait instead of a fixed sleep.
+
+    A match that comes back parsed is cached: a deferred match is retried from
+    the top, and without this each retry re-downloaded the same few hundred
+    kilobytes to get identical data.
+    """
+    cached = _PARSED_MATCH_CACHE.get(match_id)
+    if cached is not None:
+        print(f"[OPENDOTA] Match {match_id} served from cache.", flush=True)
+        return cached
+
     request_url = f"https://api.opendota.com/api/request/{match_id}"
     try:
         async with session.post(request_url) as resp:
@@ -76,6 +129,7 @@ async def fetch_parsed_match(session: aiohttp.ClientSession, match_id: int):
             await asyncio.sleep(5)
         match_data = await fetch_opendota_match(session, match_id)
         if match_has_parsed_player_data(match_data):
+            _PARSED_MATCH_CACHE.put(match_id, match_data)
             return match_data
         print(f"[OPENDOTA] Match {match_id} is not parsed yet ({attempt + 1}/6).", flush=True)
     return None
