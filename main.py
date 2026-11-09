@@ -798,9 +798,30 @@ def find_team_label_errors(content: str, team_by_hero: dict) -> list:
     return errors
 
 
-def build_verified_match_facts(match_data: dict) -> str:
-    """Render source data directly so the model cannot alter match facts."""
+def build_match_analysis(match_data: dict) -> dict:
+    """Derive telemetry and teamfight data once so each match is parsed a single time.
+
+    Both the verified panel and the coaching prompt need the same extraction. Parsing
+    per consumer meant summarize_teamfights ran twice over the teamfight log, and left
+    two call sites that had to stay in agreement.
+    """
     radiant, dire, tracked_players, all_players = extract_match_telemetry(match_data)
+    return {
+        "radiant": radiant,
+        "dire": dire,
+        "tracked_players": tracked_players,
+        "all_players": all_players,
+        "teamfights": summarize_teamfights(match_data),
+    }
+
+
+def build_verified_match_facts(match_data: dict, analysis: dict) -> str:
+    """Render source data directly so the model cannot alter match facts."""
+    radiant = analysis["radiant"]
+    dire = analysis["dire"]
+    tracked_players = analysis["tracked_players"]
+    all_players = analysis["all_players"]
+    teamfight_summary = analysis["teamfights"]
     duration = (match_data.get("duration") or 0) // 60
     winner = "Radiant" if match_data.get("radiant_win") else "Dire"
     match_patch_id = match_data.get("patch")
@@ -811,7 +832,6 @@ def build_verified_match_facts(match_data: dict) -> str:
         f"- **Result:** {winner} **{match_data.get('radiant_score')}-{match_data.get('dire_score')}** in **{duration} min**.",
     ]
 
-    teamfight_summary = summarize_teamfights(match_data)
     if tracked_players and teamfight_summary.get("full_5v5_count"):
         tracked_team = tracked_players[0]["team"]
         team_stats = teamfight_summary["teams"][tracked_team]
@@ -1061,9 +1081,12 @@ def build_current_item_catalog() -> dict:
     return catalog
 
 
-async def generate_ai_coaching_debrief(match_data: dict) -> Optional[str]:
-    radiant_lineup, dire_lineup, tracked_players, all_players = extract_match_telemetry(match_data)
-    teamfight_summary = summarize_teamfights(match_data)
+async def generate_ai_coaching_debrief(match_data: dict, analysis: dict) -> Optional[str]:
+    radiant_lineup = analysis["radiant"]
+    dire_lineup = analysis["dire"]
+    tracked_players = analysis["tracked_players"]
+    all_players = analysis["all_players"]
+    teamfight_summary = analysis["teamfights"]
     team_by_hero = {player["hero"]: player["team"] for player in all_players}
     duration_mins = match_data.get("duration", 0) // 60
     winner = "Radiant" if match_data.get("radiant_win") else "Dire"
@@ -1271,13 +1294,14 @@ async def check_recent_matches():
 
             await add_ranked_context(session, match_data)
 
-            debrief_text = await generate_ai_coaching_debrief(match_data)
+            analysis = build_match_analysis(match_data)
+            debrief_text = await generate_ai_coaching_debrief(match_data, analysis)
             if not debrief_text:
                 print(f"[RETRY] AI providers failed for match {match_id}; will retry next cycle.", flush=True)
                 defer_pending_match(account_id, match_id, "AI providers unavailable")
                 return
 
-            verified_facts = build_verified_match_facts(match_data)
+            verified_facts = build_verified_match_facts(match_data, analysis)
             complete_debrief = f"{verified_facts}\n\n---\n\n{debrief_text}"
             text_parts = chunk_debrief(complete_debrief)
             total_parts = len(text_parts)
