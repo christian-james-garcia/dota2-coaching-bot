@@ -1,0 +1,2 @@
+# Optional. The suite runs without it via `python3 run_tests.py`.
+pytest>=8.0

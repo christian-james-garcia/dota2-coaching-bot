@@ -1,22 +1,26 @@
 # Test plan
 
-No tests exist today. This document picks the order to add them in, chosen so the early tests are
-cheap to write and immediately useful as a safety net for the refactor in `docs/REFACTOR-PLAN.md`.
+The regression layer now exists: 48 tests in `tests/`, run with `python3 run_tests.py` or `pytest`,
+covering the seven bugs fixed so far. This document is what remains, plus the reasoning behind the
+order.
+
+Status: the **Regression cases** section below is done. Items 1 to 5 are partly done — each has the
+regression case written, none has the full case list. The sections after that are untouched.
 
 ## Setup
 
-```bash
-pip install pytest
-mkdir -p tests/fixtures
-```
-
-Add to `requirements.txt` only if you want CI to install it; otherwise keep a separate
-`requirements-dev.txt` so the Render build stays slim.
+Nothing to install. The suite stubs `discord.py` and `aiohttp` in `tests/_support.py` and reads
+fixtures from `tests/fixtures`, so it runs on a bare standard library; `requirements-dev.txt`
+carries `pytest` for anyone who prefers it. CI runs the dependency-free runner on 3.9 and 3.12.
 
 ## Fixtures
 
-The OpenDota match endpoint needs no API key, so fixtures can be captured and committed with no
-secret handling at all:
+Already committed: `match_parsed.json`, `match_unparsed.json` and `constants.json`. The constants
+file is projected down to the fields `main.py` reads, which took it from 1.4 MB to 316 KB with real
+values intact, including the nested Monkey King ability entry the parser has to flatten.
+
+The OpenDota match endpoint needs no API key, so further fixtures can be captured and committed
+with no secret handling at all:
 
 ```bash
 curl -s https://api.opendota.com/api/matches/<match_id> \

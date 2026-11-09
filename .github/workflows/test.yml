@@ -1,0 +1,24 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      # No install step: the suite stubs discord.py and aiohttp and reads its
+      # OpenDota data from tests/fixtures, so it needs only the standard library.
+      - name: Run tests
+        run: python3 run_tests.py
+      - name: Check main.py compiles
+        run: python3 -m py_compile main.py

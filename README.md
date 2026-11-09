@@ -104,12 +104,30 @@ The bot binds an `aiohttp` health endpoint on `$PORT` returning 200 at `/`, so i
 restart. The bot then re-discovers from the newest listed match, which can skip matches played during
 downtime. A persistent disk or an external store fixes this — see the roadmap.
 
+## Tests
+
+```bash
+python3 run_tests.py            # whole suite
+python3 run_tests.py queue      # only files matching "queue"
+pytest                          # same tests, if you have it
+```
+
+48 tests, no dependencies and no network. `discord.py` and `aiohttp` are stubbed in
+`tests/_support.py`, and the OpenDota responses come from `tests/fixtures`: a parsed match, an
+unparsed one, and game constants projected down to the fields `main.py` reads. Two further cases,
+an empty teamfight log and a match with no full 5v5, are derived from the parsed fixture in code
+rather than stored as near-duplicates.
+
+The suite covers the seven bugs fixed in this project's history; run it against the commit before
+them and 23 of the 48 fail.
+
 ## Roadmap
 
 - [ ] Move `CHANNEL_ID` and `TRACKED_STEAM_IDS` into configuration instead of source
 - [ ] Back the queue with a persistent store so Render restarts don't lose cursors
 - [ ] Split `main.py` into modules — OpenDota client, telemetry, prompting, Discord delivery
-- [ ] Add tests, starting with `extract_match_telemetry`, `summarize_teamfights`, and `find_team_label_errors`
+- [x] Regression tests for the seven fixed bugs, with a dependency-free runner and CI
+- [ ] Widen coverage: hand-audited `summarize_teamfights` totals, full `extract_match_telemetry` cases
 - [ ] Cache OpenDota responses to reduce calls against the public rate limit
 - [ ] Slash commands for on-demand debriefs of a given match id
 - [ ] Widen validation beyond team labels to item and ability claims
