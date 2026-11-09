@@ -20,5 +20,5 @@ jobs:
       # OpenDota data from tests/fixtures, so it needs only the standard library.
       - name: Run tests
         run: python3 run_tests.py
-      - name: Check main.py compiles
-        run: python3 -m py_compile main.py
+      - name: Check every module compiles
+        run: python3 -m py_compile *.py tests/*.py
