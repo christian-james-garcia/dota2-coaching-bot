@@ -14,21 +14,20 @@ import os
 import sys
 
 from _support import FIXTURES, analysis_module, coaching_module, delivery_module, \
-    fixture, game_data, main_module, match_without_full_five_v_fives, \
+    facts_module, fixture, game_data, match_without_full_five_v_fives, \
     match_without_teamfights
 
 GOLDEN = os.path.join(FIXTURES, "golden_output.json")
 
 
 def _actual():
-    bot = main_module()
     module = analysis_module()
     game = game_data()
     expected = json.load(open(GOLDEN, encoding="utf-8"))
     match = fixture("match_parsed.json")
     tracked = expected["tracked_steam_ids"]
     analysis = module.build_match_analysis(match, game, tracked)
-    panel = bot.build_verified_match_facts(match, analysis, game)
+    panel = facts_module().build_verified_match_facts(match, analysis, game)
     return expected, {
         "tracked_steam_ids": tracked,
         "analysis": analysis,

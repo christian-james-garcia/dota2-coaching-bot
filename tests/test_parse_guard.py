@@ -4,15 +4,15 @@ It used to test for a "benchmarks" key, which OpenDota sets on matches it has
 never parsed. Every unparsed match passed, so fetch_parsed_match returned on
 its first attempt and debriefs were built from empty data.
 """
-from _support import fixture, main_module
+from _support import fixture, opendota_module
 
 
 def test_accepts_a_parsed_match():
-    assert main_module().match_has_parsed_player_data(fixture("match_parsed.json")) is True
+    assert opendota_module().match_has_parsed_player_data(fixture("match_parsed.json")) is True
 
 
 def test_rejects_an_unparsed_match():
-    assert main_module().match_has_parsed_player_data(fixture("match_unparsed.json")) is False
+    assert opendota_module().match_has_parsed_player_data(fixture("match_unparsed.json")) is False
 
 
 def test_unparsed_match_still_carries_hollow_benchmarks():
@@ -24,23 +24,23 @@ def test_unparsed_match_still_carries_hollow_benchmarks():
 
 
 def test_rejects_missing_and_empty_input():
-    guard = main_module().match_has_parsed_player_data
+    guard = opendota_module().match_has_parsed_player_data
     assert guard(None) is False
     assert guard({}) is False
     assert guard({"version": 22, "players": []}) is False
 
 
 def test_version_alone_is_not_enough():
-    guard = main_module().match_has_parsed_player_data
+    guard = opendota_module().match_has_parsed_player_data
     assert guard({"version": 22, "players": [{"benchmarks": {}}]}) is False
 
 
 def test_replay_fields_alone_are_not_enough():
-    guard = main_module().match_has_parsed_player_data
+    guard = opendota_module().match_has_parsed_player_data
     assert guard({"players": [{"purchase_log": [{"key": "blink"}]}]}) is False
 
 
 def test_zero_last_hits_at_ten_is_real_data():
     # lh_ten == 0 is a legitimate value and must not read as missing.
-    guard = main_module().match_has_parsed_player_data
+    guard = opendota_module().match_has_parsed_player_data
     assert guard({"version": 22, "players": [{"lh_ten": 0}]}) is True

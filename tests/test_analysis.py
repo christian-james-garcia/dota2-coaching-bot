@@ -4,11 +4,10 @@ build_verified_match_facts and generate_ai_coaching_debrief both called
 extract_match_telemetry and summarize_teamfights on the same match, so every
 debrief parsed it twice and left two call sites that had to stay in agreement.
 """
-from _support import analysis_module, fixture, game_data, main_module, tracked_ids
+from _support import analysis_module, facts_module, fixture, game_data, tracked_ids
 
 
 def test_analysis_runs_each_helper_once():
-    bot = main_module()
     module = analysis_module()
     game = game_data()
     match = fixture("match_parsed.json")
@@ -28,7 +27,7 @@ def test_analysis_runs_each_helper_once():
     module.summarize_teamfights = counting_teamfights
     try:
         analysis = module.build_match_analysis(match, game, tracked_ids(match))
-        bot.build_verified_match_facts(match, analysis, game)
+        facts_module().build_verified_match_facts(match, analysis, game)
     finally:
         module.extract_match_telemetry = real_telemetry
         module.summarize_teamfights = real_teamfights
@@ -57,10 +56,9 @@ def test_rosters_are_disjoint():
 
 
 def test_the_panel_renders_from_the_shared_analysis():
-    bot = main_module()
     game = game_data()
     match = fixture("match_parsed.json")
     analysis = analysis_module().build_match_analysis(match, game, tracked_ids(match))
-    panel = bot.build_verified_match_facts(match, analysis, game)
+    panel = facts_module().build_verified_match_facts(match, analysis, game)
     assert "VERIFIED OPENDOTA FACTS" in panel
     assert "Radiant roster:" in panel

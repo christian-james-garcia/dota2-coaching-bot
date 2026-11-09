@@ -206,6 +206,20 @@ def tracked_ids(match):
     return sorted(p["account_id"] for p in match["players"] if p.get("account_id"))[:1]
 
 
+def facts_module():
+    """The verified-panel module, with stubs already installed."""
+    main_module()
+    import facts
+    return facts
+
+
+def opendota_module():
+    """The OpenDota client module, with stubs already installed."""
+    main_module()
+    import opendota
+    return opendota
+
+
 def delivery_module():
     """The Discord delivery module, with stubs already installed."""
     main_module()
