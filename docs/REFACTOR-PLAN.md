@@ -33,6 +33,9 @@ delivery/discord.py       chunk_debrief, embed construction and sending
 
 ## The state, and who should own it
 
+*Steps 1 to 3 acted on all three groups below; the text is kept because it is the reasoning the
+split was based on, and groups 1 and 2 describe what `GameData` and `MatchState` now hold.*
+
 14 module-level mutable names, in three groups:
 
 **Group 1 — OpenDota constants (9 names).** `HERO_NAME_MAP`, `HERO_UNIT_NAME_MAP`,
@@ -60,13 +63,13 @@ because it converts five of the six readers into pure functions.
 
 These are the things that will break quietly if moved carelessly.
 
-**1. `bot` is used 70 lines before it is defined.** `check_recent_matches` reads `bot` at lines
-1246 and 1249; `bot` is assigned at line 1316. This works only because the name resolves at call
+**1. `bot` is used before it is defined.** Still open. `check_recent_matches` reads `bot` at lines
+1100 and 1103; `bot` is assigned at line 1164. This works only because the name resolves at call
 time, not definition time. Split naively and this becomes a circular import between the task loop
 and the bot module. Fix: pass `bot` (or just the resolved channel) into the loop as a parameter.
 Do not import it.
 
-**2. `request_completion` closes over `session`.** It is nested inside the
+**2. `request_completion` closes over `session`.** Still open; relevant to step 6. It is nested inside the
 `async with aiohttp.ClientSession(...)` block in `generate_ai_coaching_debrief`, not at module
 level. Moving it to `coaching/providers.py` means `session` must become an explicit first argument,
 and the caller must keep owning the session lifetime.
@@ -76,16 +79,18 @@ and the caller must keep owning the session lifetime.
 `setup_hook` deliberately. The `STATE_LOADED` flag exists to stop a reconnect from reloading state
 and discarding in-memory queue progress. Preserve both or reconnects start re-posting matches.
 
-**4. `load_match_state` reads `TRACKED_STEAM_IDS`.** Not for tracking — for the legacy migration
+**4. `load_match_state` reads `TRACKED_STEAM_IDS`.** *(resolved in step 2: `MatchState.load`
+takes `tracked_steam_ids` as an explicit argument, and the migration has a test.)* Not for tracking — for the legacy migration
 path that converts the old single-cursor state file to the per-account format. If config moves
 without this, old state files silently reset to an empty queue.
 
-**5. Delete-after-delivery ordering.** In `check_recent_matches`, the match is removed from
+**5. Delete-after-delivery ordering.** *(moved intact into `MatchState.complete` in step 2;
+the ordering requirement now lives in that method's docstring.)* In `check_recent_matches`, the match is removed from
 `pending` and the cursor advanced *only after* every embed part is accepted by Discord. Any
 reordering here trades the at-least-once guarantee for silent match loss.
 
-**6. The bare `except Exception` in the poll loop** reads `account_id` and `match_id` via
-`locals()`. If the loop body moves into a helper, that introspection stops working and the
+**6. The poll loop's handlers** read `account_id` and `match_id` via `locals()` (two sites now,
+one per handler). Still open; relevant to step 8. If the loop body moves into a helper, that introspection stops working and the
 deferral on unexpected errors silently does nothing.
 
 ## A real bug this surfaced (fixed in 2170689)
@@ -109,34 +114,68 @@ their callers.
 
 Each step leaves the bot runnable. Commit and verify between steps.
 
-1. **`config.py`** — move env vars and constants. No behavior change. Keep the legacy-migration
-   dependency noted in hazard 4 in mind.
-2. **`state.py`** — wrap `MATCH_STATE` in `MatchState`. Smallest blast radius, 5 call sites, and it
-   makes the backoff schedule testable on its own.
-3. **`opendota/gamedata.py`** — the `GameData` object. Largest win, largest diff. Do it alone.
-4. **`analysis/telemetry.py`** — now pure, since constants arrive as arguments. Fix the double
-   computation here.
-5. **`analysis/facts.py`** — `build_verified_match_facts` is 246 lines and the largest function in
-   the file. Worth breaking into per-section builders while moving it.
-6. **`coaching/`** — prompt, providers, validation. Mind hazard 2.
-7. **`delivery/discord.py`** — chunking and embeds.
-8. **`main.py`** — should be wiring only by now.
+- [x] **1. `config.py`** — env vars and tuning constants, plus `TRANSIENT_ERRORS` (`02944df`)
+- [x] **2. `state.py`** — `MatchState` owns the queue, cursors, backoff and persistence (`99a038d`)
+- [x] **3. `gamedata.py`** — `GameData` owns the nine constants maps; `reporting.py` splits out
+      `report_unexpected` (`62e25f0`)
+- [ ] **4. `analysis.py`** — `extract_match_telemetry`, `summarize_teamfights`,
+      `build_match_analysis`. Already pure: constants arrive as a `GameData` argument and nothing
+      is read from module scope. This is now plain code motion, the easiest remaining step.
+- [ ] **5. `facts.py`** — `build_verified_match_facts`, still 247 lines and the largest function in
+      the project. Worth breaking into per-section builders while moving it, which is the one
+      remaining step where the golden test is doing real work rather than confirming the obvious.
+- [ ] **6. `coaching.py`** — the prompt, the provider chain, and `find_team_label_errors`. Mind
+      hazard 2, which is still open.
+- [ ] **7. `delivery.py`** — `balanced_split_point`, `chunk_debrief`, and the embed construction
+      currently inline in the poll loop.
+- [ ] **8. `main.py`** — wiring, the bot subclass, and the poll loop only.
+
+### A note on layout
+
+The original plan proposed packages (`opendota/`, `analysis/`, `coaching/`). Steps 1 to 3 used flat
+modules at the repo root instead, because five files do not need namespacing and the package names
+assumed more files per package than this actually produces. Steps 4 to 8 are written for flat
+modules to match. If the file count grows past roughly a dozen, grouping them is a separate, purely
+mechanical change.
 
 ## Verifying each step
 
-No test suite exists yet, so until `docs/TEST-PLAN.md` is acted on, verification is manual:
-
 ```bash
-python -c "import main"              # import graph is acyclic and nothing is undefined
-python -m py_compile main.py
+python3 run_tests.py                # 58 tests, no dependencies, no network
+python3 -m py_compile main.py
 ```
 
-Then run against a known match id with a real `DISCORD_BOT_TOKEN` pointed at a scratch channel, and
-diff the posted verified panel against the pre-refactor output. The verified panel is deterministic
-given a match id, so it is a usable golden output. The LLM sections are not.
+`tests/test_golden.py` is the net. It holds the derived analysis, the rendered panel, its chunking
+and the teamfight edge cases for a real parsed match, frozen before step 1. Name-based tests move
+with the code being moved and so cannot show that a refactor changed nothing; these expectations
+can. A step that changes them is not a refactor.
 
-Note: step 3 changes the signature of five functions at once. That is the step most worth having a
-test for first, which is the argument for doing TEST-PLAN step 1 before this one.
+Regenerate only when you have decided output *should* change, never to clear a failure:
+
+```bash
+python3 tests/test_golden.py --regenerate
+```
+
+### What steps 1 to 3 taught about doing 4 to 8
+
+- **Port functions verbatim; do not rewrite them from their intent.** The one real mistake in step 3
+  was re-deriving `item_catalog` from its docstring: it iterated all 501 items with untruncated
+  descriptions instead of the curated 20 capped at 450 characters. That text goes into the prompt,
+  so it would have degraded output without failing anything. The golden test caught it. Copy the
+  body, then adjust.
+- **Make the edit script refuse to write on a mismatch.** Replacing on an exact-match-exactly-once
+  rule, and aborting the whole script before saving if any pattern is missing, means a bad
+  assumption leaves the file untouched instead of half-edited. This happened once, on the ranked
+  context call, and cost nothing.
+- **`tests/_support.py` moves with the code.** It imports `main.py` by path and installs the
+  `discord` and `aiohttp` stubs. As functions move, the tests' import lines change but their
+  assertions should not. If an assertion has to change to keep a step green, that step is not a
+  refactor.
+- **A new module that imports `config` pulls in `aiohttp`,** because `TRANSIENT_ERRORS` is built
+  from it. That is fine in the bot and in tests, which install stubs first, but it means a new
+  module cannot be imported standalone on a machine without `aiohttp`.
+- **Watch for imports that go unused as code leaves.** Each of steps 1 to 3 left one or two behind.
+  An AST pass comparing imported names against used names catches them in a second.
 
 ## A second, smaller finding (fixed in 8aafab5)
 
