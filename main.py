@@ -718,7 +718,7 @@ def summarize_teamfights(match_data: dict) -> dict:
                 "hero_kills": 0, "ability_uses": Counter(), "item_uses": Counter(),
                 "tracked_player": False,
             })
-            total = hero_totals[row["hero"]]
+            total = hero_totals[hero_key]
             total["fights_active"] += 1
             total["deaths"] += row["deaths"]
             total["damage"] += row["damage"]
