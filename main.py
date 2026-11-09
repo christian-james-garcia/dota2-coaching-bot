@@ -5,7 +5,6 @@ import re
 import time
 import traceback
 from collections import Counter, defaultdict
-from pathlib import Path
 from typing import Optional
 
 import aiohttp
@@ -13,33 +12,25 @@ import discord
 from aiohttp import web
 from discord.ext import commands, tasks
 
-# Configure these values in your hosting environment.
-DISCORD_BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
-LLM_API_KEY = os.environ.get("LLM_API_KEY")  # Google AI Studio key
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY")  # Optional fallback
-CHANNEL_ID = 1567594143834702025
-TRACKED_STEAM_IDS = [243689827]  # OpenDota 32-bit account IDs
-STATE_FILE = Path(os.environ.get("LAST_PROCESSED_MATCH_FILE", "last_processed_match.json"))
-HISTORY_PAGE_SIZE = 100
-GAME_DATA_REFRESH_SECONDS = 6 * 60 * 60
-GAME_DATA_RETRY_SECONDS = 10 * 60
-RANKED_SAMPLE_CACHE_SECONDS = 6 * 60 * 60
-RANKED_DETAIL_SAMPLE_LIMIT = 10
-RANKED_DETAIL_CANDIDATE_LIMIT = 20
-RANKED_MATCH_SCAN_PAGE_SIZE = 100
-RANKED_MATCH_SCAN_MAX_PAGES = 12
-RETRY_BACKOFF_BASE_SECONDS = 60
-RETRY_BACKOFF_MAX_SECONDS = 32 * 60  # the base doubling five times
-BUG_RETRY_LIMIT = 3
-
-# Failures that mean the network or a remote service misbehaved, and that a later
-# attempt may well survive. Anything else escaping an I/O block is a defect in
-# this file: it is reported as one rather than counted as an outage.
-TRANSIENT_ERRORS = (
-    aiohttp.ClientError,
-    asyncio.TimeoutError,
-    OSError,
-    json.JSONDecodeError,
+from config import (
+    BUG_RETRY_LIMIT,
+    CHANNEL_ID,
+    DISCORD_BOT_TOKEN,
+    GAME_DATA_REFRESH_SECONDS,
+    GAME_DATA_RETRY_SECONDS,
+    GROQ_API_KEY,
+    HISTORY_PAGE_SIZE,
+    LLM_API_KEY,
+    RANKED_DETAIL_CANDIDATE_LIMIT,
+    RANKED_DETAIL_SAMPLE_LIMIT,
+    RANKED_MATCH_SCAN_MAX_PAGES,
+    RANKED_MATCH_SCAN_PAGE_SIZE,
+    RANKED_SAMPLE_CACHE_SECONDS,
+    RETRY_BACKOFF_BASE_SECONDS,
+    RETRY_BACKOFF_MAX_SECONDS,
+    STATE_FILE,
+    TRACKED_STEAM_IDS,
+    TRANSIENT_ERRORS,
 )
 
 HERO_NAME_MAP = {}
