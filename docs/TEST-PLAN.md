@@ -28,7 +28,7 @@ Capture at least three:
 | Fixture | Why |
 |---|---|
 | `match_parsed.json` | A fully parsed match with `teamfights`, `purchase_log`, `benchmarks` |
-| `match_unparsed.json` | A recent match before replay parsing completes — most fields absent |
+| `match_unparsed.json` | A recent match before replay parsing completes — `version` null, `benchmarks` present but hollow |
 | `match_no_teamfights.json` | Parsed but with an empty or missing `teamfights` array |
 
 The second and third are the ones that matter. Most of the defensive `.get(..., default)` code in
@@ -124,6 +124,14 @@ unnoticed:
 - **`TRANSIENT_ERRORS` excludes `KeyError`, `TypeError` and `AttributeError`.** A one-line
   `issubclass` assertion, and it is the guard that keeps the two bugs above from being absorbed
   again.
+- **`match_has_parsed_player_data` rejects an unparsed match** (`27d9f72`). The `match_unparsed`
+  fixture is the whole test. Assert `False` on it and `True` on the parsed fixture; also cover
+  `lh_ten == 0`, which is real and must not be read as missing. This is the single highest-value
+  assertion in the file, because the old check passed 12 of 12 unparsed matches.
+- **`chunk_debrief` never emits a chunk with an odd `**` count** (`ae69578`). Build input from
+  many short bold spans so a split is forced mid-pair.
+- **`find_team_label_errors` does not fire across a newline** (`65a36fa`), while still catching
+  `Hero (WrongTeam)`, `WrongTeam Hero`, `WrongTeam's Hero` and `Hero is on WrongTeam` on one line.
 
 ## Not worth testing yet
 
