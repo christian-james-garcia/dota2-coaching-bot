@@ -62,12 +62,14 @@ pip install -r requirements.txt
 cp .env.example .env    # then fill it in
 ```
 
-Set the channel and the accounts you want tracked near the top of `main.py`:
+Set the channel and the accounts you want tracked in the environment:
 
-```python
-CHANNEL_ID = 1567594143834702025      # your Discord channel id
-TRACKED_STEAM_IDS = [243689827]       # OpenDota 32-bit account ids
+```bash
+DISCORD_CHANNEL_ID=1567594143834702025
+TRACKED_STEAM_IDS=243689827            # comma or space separated for several
 ```
+
+A malformed value logs a `[CONFIG]` line and falls back to the default rather than failing startup.
 
 Your OpenDota account id is the number in your profile URL at `opendota.com/players/<id>`. Match history must
 be public in Dota 2 under Settings → Options → Expose Public Match Data.
@@ -86,6 +88,8 @@ python main.py
 | `DISCORD_BOT_TOKEN` | yes | Discord bot token |
 | `LLM_API_KEY` | one of the two | Google AI Studio key, primary provider |
 | `GROQ_API_KEY` | one of the two | Groq key, fallback provider |
+| `DISCORD_CHANNEL_ID` | no | Target channel; defaults to the author's |
+| `TRACKED_STEAM_IDS` | no | Accounts to track, comma or space separated |
 | `LAST_PROCESSED_MATCH_FILE` | no | Queue location, default `last_processed_match.json` |
 | `PORT` | no | Health endpoint port, default `10000` |
 
@@ -123,11 +127,12 @@ them and 23 of the 48 fail.
 
 ## Roadmap
 
-- [ ] Move `CHANNEL_ID` and `TRACKED_STEAM_IDS` into configuration instead of source
+- [x] Move `CHANNEL_ID` and `TRACKED_STEAM_IDS` into configuration instead of source
 - [ ] Back the queue with a persistent store so Render restarts don't lose cursors
-- [ ] Split `main.py` into modules — OpenDota client, telemetry, prompting, Discord delivery
+- [x] Split `main.py` into modules — 1365 lines became 158 across eleven modules
 - [x] Regression tests for the seven fixed bugs, with a dependency-free runner and CI
 - [ ] Widen coverage: hand-audited `summarize_teamfights` totals, full `extract_match_telemetry` cases
+- [x] Bound the match-history scan so an old cursor cannot walk the whole history
 - [ ] Cache OpenDota responses to reduce calls against the public rate limit
 - [ ] Slash commands for on-demand debriefs of a given match id
 - [ ] Widen validation beyond team labels to item and ability claims

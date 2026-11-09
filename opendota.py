@@ -13,6 +13,7 @@ import aiohttp
 
 from config import (
     HISTORY_PAGE_SIZE,
+    HISTORY_SCAN_MAX_PAGES,
     RANKED_DETAIL_CANDIDATE_LIMIT,
     RANKED_DETAIL_SAMPLE_LIMIT,
     RANKED_MATCH_SCAN_MAX_PAGES,
@@ -95,6 +96,7 @@ async def discover_unseen_matches(session: aiohttp.ClientSession, account_id: in
     known = state.queued_keys()
 
     offset = 0
+    pages_scanned = 0
     found_watermark = False
     first_page = True
     newest_discovered = watermark
@@ -151,6 +153,21 @@ async def discover_unseen_matches(session: aiohttp.ClientSession, account_id: in
             break
         offset += len(page)
         first_page = False
+        pages_scanned += 1
+        if pages_scanned >= HISTORY_SCAN_MAX_PAGES:
+            # Without a cap an old cursor walks the entire match history. Stopping
+            # here sets the watermark to the newest match seen, so everything older
+            # than this window is skipped and never queued. That is deliberate: a
+            # long outage should not produce a thousand debriefs. The alternative,
+            # leaving the watermark alone, would rescan the same pages every cycle
+            # and never progress.
+            print(
+                f"[HISTORY] Hit the {HISTORY_SCAN_MAX_PAGES}-page scan limit for account "
+                f"{account_id} without reaching cursor {watermark}. Matches older than "
+                f"the last {pages_scanned * HISTORY_PAGE_SIZE} are being skipped.",
+                flush=True,
+            )
+            break
         # Stay comfortably below OpenDota's unauthenticated request rate limit.
         await asyncio.sleep(1.1)
 

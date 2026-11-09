@@ -226,7 +226,7 @@ For the refactor this means the error-handling policy is already one decision in
 rather than eleven scattered handlers, so moving code into modules no longer risks changing it by
 accident.
 
-## Open finding: discovery pagination is unbounded
+## Closed finding: discovery pagination was unbounded
 
 `discover_unseen_matches` pages backwards until it reaches the saved watermark or receives a short
 page. Unlike `get_ranked_hero_sample`, which stops at `RANKED_MATCH_SCAN_MAX_PAGES`, it has no page
@@ -234,8 +234,13 @@ limit. With a watermark far in the past it walks the entire match history at 100
 1.1s sleep between pages, and queues every match it finds.
 
 This is not reachable from a cold start, because a missing watermark queues only the latest match.
-It needs an old watermark, which is the state after a long outage. Left unfixed: a page cap plus a
-decision about what to do with the skipped span is a design choice, not a correction.
+It needs an old watermark, which is the state after a long outage.
+
+Now capped at `HISTORY_SCAN_MAX_PAGES`. The design question was what to do with the span that goes
+unscanned, and the answer taken is to skip it: the watermark advances to the newest match seen and
+the older matches are never queued, with a `[HISTORY]` line saying so. A long outage should not
+produce a thousand debriefs, and the alternative — leaving the watermark alone — would rescan the
+same pages every cycle and never progress.
 
 Relevant to hazard 4 and to the Render note in the README: on this deploy target the state file is
 ephemeral, so the usual outcome is a *missing* watermark rather than an old one, which takes the

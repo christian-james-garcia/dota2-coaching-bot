@@ -44,3 +44,41 @@ def test_zero_last_hits_at_ten_is_real_data():
     # lh_ten == 0 is a legitimate value and must not read as missing.
     guard = opendota_module().match_has_parsed_player_data
     assert guard({"version": 22, "players": [{"lh_ten": 0}]}) is True
+
+
+def test_the_history_scan_is_bounded():
+    # An old cursor used to walk the whole match history with no page limit.
+    from _support import main_module
+    main_module()
+    import config
+    assert config.HISTORY_SCAN_MAX_PAGES > 0
+    assert config.HISTORY_SCAN_MAX_PAGES * config.HISTORY_PAGE_SIZE <= 5000
+
+
+def test_channel_and_tracked_accounts_come_from_the_environment():
+    import importlib
+    import os
+    from _support import main_module
+    main_module()
+    import config
+    previous = {k: os.environ.get(k) for k in ("DISCORD_CHANNEL_ID", "TRACKED_STEAM_IDS")}
+    try:
+        os.environ["DISCORD_CHANNEL_ID"] = "4242"
+        os.environ["TRACKED_STEAM_IDS"] = "11, 22 33"
+        reloaded = importlib.reload(config)
+        assert reloaded.CHANNEL_ID == 4242
+        assert reloaded.TRACKED_STEAM_IDS == [11, 22, 33]
+
+        os.environ["DISCORD_CHANNEL_ID"] = "not-a-number"
+        os.environ["TRACKED_STEAM_IDS"] = "nonsense"
+        reloaded = importlib.reload(config)
+        # A bad value must not take the bot down; it falls back to the default.
+        assert isinstance(reloaded.CHANNEL_ID, int)
+        assert reloaded.TRACKED_STEAM_IDS
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        importlib.reload(config)

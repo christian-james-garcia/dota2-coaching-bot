@@ -15,11 +15,47 @@ import aiohttp
 DISCORD_BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
 LLM_API_KEY = os.environ.get("LLM_API_KEY")  # Google AI Studio key
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")  # Optional fallback
-CHANNEL_ID = 1567594143834702025
-TRACKED_STEAM_IDS = [243689827]  # OpenDota 32-bit account IDs
+
+
+def _int_env(name: str, default: int) -> int:
+    """An integer setting, falling back loudly rather than crashing on startup."""
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        print(f"[CONFIG] {name}={raw!r} is not an integer; using {default}.", flush=True)
+        return default
+
+
+def _id_list_env(name: str, default: list) -> list:
+    """A list of account ids, accepting commas or whitespace."""
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return list(default)
+    ids, bad = [], []
+    for part in raw.replace(",", " ").split():
+        try:
+            ids.append(int(part))
+        except ValueError:
+            bad.append(part)
+    if bad:
+        print(f"[CONFIG] {name} ignored non-numeric entries: {', '.join(bad)}.", flush=True)
+    if not ids:
+        print(f"[CONFIG] {name} had no usable ids; using {default}.", flush=True)
+        return list(default)
+    return ids
+
+
+# Defaults are this deployment's values, so an existing install keeps working
+# without new environment variables.
+CHANNEL_ID = _int_env("DISCORD_CHANNEL_ID", 1567594143834702025)
+TRACKED_STEAM_IDS = _id_list_env("TRACKED_STEAM_IDS", [243689827])  # OpenDota 32-bit ids
 STATE_FILE = Path(os.environ.get("LAST_PROCESSED_MATCH_FILE", "last_processed_match.json"))
 
 HISTORY_PAGE_SIZE = 100
+HISTORY_SCAN_MAX_PAGES = 12
 GAME_DATA_REFRESH_SECONDS = 6 * 60 * 60
 GAME_DATA_RETRY_SECONDS = 10 * 60
 RANKED_SAMPLE_CACHE_SECONDS = 6 * 60 * 60
