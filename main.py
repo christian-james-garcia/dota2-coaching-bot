@@ -1306,6 +1306,23 @@ async def generate_ai_coaching_debrief(match_data: dict, analysis: dict) -> Opti
     return None
 
 
+def balanced_split_point(text: str, split_at: int) -> int:
+    """Move a split point back until it is not inside a ** ** pair.
+
+    Discord renders a chunk on its own, so a bold marker separated from its
+    partner shows up as literal asterisks. The prompt asks for bold on the key
+    takeaways, so an unbalanced split disfigures exactly the emphasized text.
+    Falls back to the original point when no balanced boundary exists.
+    """
+    candidate = split_at
+    while candidate > 0 and text[:candidate].count("**") % 2:
+        previous = max(text.rfind("\n", 0, candidate), text.rfind(" ", 0, candidate))
+        if previous <= 0:
+            return split_at
+        candidate = previous
+    return candidate or split_at
+
+
 def chunk_debrief(text: str, max_len: int = 3800) -> list:
     """Split text into chunks that stay below Discord's embed description limit."""
     if not text:
@@ -1320,6 +1337,7 @@ def chunk_debrief(text: str, max_len: int = 3800) -> list:
             split_at = max(remaining.rfind("\n", 0, max_len), remaining.rfind(" ", 0, max_len))
             if split_at < max_len // 2:
                 split_at = max_len
+            split_at = balanced_split_point(remaining, split_at)
             pieces.append(remaining[:split_at].rstrip())
             remaining = remaining[split_at:].lstrip()
         pieces.append(remaining)
