@@ -28,6 +28,8 @@ RANKED_DETAIL_SAMPLE_LIMIT = 10
 RANKED_DETAIL_CANDIDATE_LIMIT = 20
 RANKED_MATCH_SCAN_PAGE_SIZE = 100
 RANKED_MATCH_SCAN_MAX_PAGES = 12
+RETRY_BACKOFF_BASE_SECONDS = 60
+RETRY_BACKOFF_MAX_SECONDS = 32 * 60  # the base doubling five times
 
 HERO_NAME_MAP = {}
 HERO_UNIT_NAME_MAP = {}
@@ -114,7 +116,10 @@ def defer_pending_match(account_id: int, match_id: int, reason: str) -> None:
     for item in MATCH_STATE["pending"]:
         if int(item.get("account_id", -1)) == account_id and int(item.get("match_id", -1)) == match_id:
             attempts = int(item.get("attempts", 0)) + 1
-            delay_seconds = min(3600, 60 * (2 ** min(attempts - 1, 5)))
+            delay_seconds = min(
+                RETRY_BACKOFF_MAX_SECONDS,
+                RETRY_BACKOFF_BASE_SECONDS * (2 ** (attempts - 1)),
+            )
             item["attempts"] = attempts
             item["next_attempt_at"] = time.time() + delay_seconds
             print(
