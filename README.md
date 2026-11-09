@@ -27,9 +27,12 @@ This was the main design problem, and most of the code exists to solve it:
 
 - **Facts are not generated.** `build_verified_match_facts()` renders stats from the API. The prompt forbids the
   model from restating or recalculating them.
-- **Team assignments are validated.** `find_team_label_errors()` checks the model's output against the real
-  rosters. On a mismatch the bot re-asks once with the error quoted back; if the second draft still misplaces a
-  hero, the coaching text is withheld and only the verified panel is posted.
+- **Claims are validated.** `find_claim_errors()` checks the model's output against the real rosters
+  and against which hero owns which ability. On a mismatch the bot re-asks once with the error quoted
+  back; if the second draft still fails, the coaching text is withheld and only the verified panel is
+  posted. Only same-line attributions count, and ability names that are also item names, or shorter
+  than six characters, are skipped: a false positive costs the whole coaching section, so the checks
+  are deliberately conservative.
 - **Current mechanics are supplied, not recalled.** Hero abilities and item descriptions come from OpenDota
   constants for the live patch, and the prompt marks them as authoritative.
 - **Patch drift is stated.** The match patch and the constants patch are both named, so the model cannot claim
@@ -145,7 +148,7 @@ them and 23 of the 48 fail.
 - [x] Bound the match-history scan so an old cursor cannot walk the whole history
 - [x] Cache parsed matches so a retry does not re-download one
 - [x] Slash command for on-demand debriefs of a given match id
-- [ ] Widen validation beyond team labels to item and ability claims
+- [x] Widen validation to ability attribution as well as team labels
 
 ## Data and privacy
 

@@ -25,8 +25,8 @@ GROQ_MODELS = ("openai/gpt-oss-120b",)
 MAX_COMPLETION_TOKENS = 2500
 REQUEST_TIMEOUT_SECONDS = 45
 WITHHELD_NOTICE = (
-    "\u26a0\ufe0f AI coaching text withheld because team assignments failed "
-    "validation. See the verified facts above."
+    "\u26a0\ufe0f AI coaching text withheld because it made a claim the match data "
+    "does not support. See the verified facts above."
 )
 
 
@@ -72,6 +72,73 @@ def find_team_label_errors(content: str, team_by_hero: dict) -> list:
         if any(re.search(pattern, content, flags=re.IGNORECASE) for pattern in patterns):
             errors.append(f"{hero} is {actual_team}, not {wrong_team}")
     return errors
+
+
+# Short names collide with ordinary words and with item names, and a false
+# positive costs the whole coaching section, so they are not checked.
+MIN_CHECKED_ABILITY_LENGTH = 6
+
+# Verbs that attribute an ability to the hero named before them.
+ATTRIBUTION_VERBS = (
+    r"(?:used|uses|using|cast|casts|casting|landed|lands|hit|hits|"
+    r"opened[ \t]+with|opens[ \t]+with|followed[ \t]+up[ \t]+with|"
+    r"follows[ \t]+up[ \t]+with|chained|chains|has|had)"
+)
+
+
+def find_ability_attribution_errors(content: str, abilities_by_hero: dict,
+                                    known_abilities, item_names=()) -> list:
+    """Abilities credited to a hero in this match that does not have them.
+
+    The same shape of check as find_team_label_errors, and the same trade: only
+    same-line adjacency counts, because matching across a line break turned
+    layout into a validation failure.
+
+    Ability names that are also item names are skipped. "Blink" is both Anti-Mage's
+    ability and an item every hero buys, so "Techies Blink" is a legitimate
+    sentence about an item and must not read as a misattributed spell.
+    """
+    lowered = content.lower()
+    excluded = {str(name).lower() for name in item_names}
+    mentioned = [
+        ability for ability in known_abilities
+        if ability
+        and len(ability) >= MIN_CHECKED_ABILITY_LENGTH
+        and ability.lower() not in excluded
+        and ability.lower() in lowered
+    ]
+    if not mentioned:
+        return []
+
+    errors = []
+    for hero, owned in abilities_by_hero.items():
+        owned_lower = {str(a).lower() for a in owned or ()}
+        for ability in mentioned:
+            if ability.lower() in owned_lower:
+                continue
+            hero_pattern = re.escape(hero)
+            ability_pattern = re.escape(ability)
+            patterns = (
+                # "Lycan's Shapeshift", and "Techies' Blast Off!" where the
+                # hero name already ends in s and takes a bare apostrophe.
+                rf"\b{hero_pattern}(?:[\u2019']s|[\u2019'])[ \t]+{ability_pattern}\b",
+                rf"\b{hero_pattern}[ \t]+{ability_pattern}\b",
+                # "Lycan used Chakra Magic". A verb list rather than a wildcard
+                # gap: "A pressured while B used X" would otherwise read as a
+                # claim about A.
+                rf"\b{hero_pattern}[ \t]+{ATTRIBUTION_VERBS}[ \t]+{ability_pattern}\b",
+            )
+            if any(re.search(p, content, flags=re.IGNORECASE) for p in patterns):
+                errors.append(f"{ability} is not {hero}'s ability")
+    return errors
+
+
+def find_claim_errors(content: str, team_by_hero: dict, abilities_by_hero: dict,
+                      known_abilities=(), item_names=()) -> list:
+    """Every check a draft has to pass before it is published."""
+    return (find_team_label_errors(content, team_by_hero)
+            + find_ability_attribution_errors(content, abilities_by_hero,
+                                              known_abilities, item_names))
 
 
 def build_coach_prompt(match_data: dict, analysis: dict, game: GameData) -> str:
@@ -136,8 +203,9 @@ def build_correction_prompt(coach_prompt: str, radiant_lineup, dire_lineup,
     """Re-ask once, quoting the rosters and the specific error back."""
     return (
         f"{coach_prompt}\n\n"
-        "Your previous draft assigned a hero to the wrong team. Rewrite the complete response "
-        "using the verified rosters below, and make every matchup cross-team.\n"
+        "Your previous draft made a claim the match data does not support. Rewrite the "
+        "complete response using the verified rosters below, keep every matchup cross-team, "
+        "and name only abilities belonging to the hero you attribute them to.\n"
         f"Verified Radiant: {', '.join(radiant_lineup)}\n"
         f"Verified Dire: {', '.join(dire_lineup)}\n"
         f"Detected error(s): {'; '.join(errors)}\n"
@@ -180,6 +248,12 @@ async def generate_ai_coaching_debrief(match_data: dict, analysis: dict, game: G
     radiant_lineup = analysis["radiant"]
     dire_lineup = analysis["dire"]
     team_by_hero = {player["hero"]: player["team"] for player in analysis["all_players"]}
+    abilities_by_hero = {
+        player["hero"]: player.get("current_abilities") or []
+        for player in analysis["all_players"]
+    }
+    known_abilities = tuple(game.ability_names.values())
+    item_names = tuple(game.item_key_names.values())
     coach_prompt = build_coach_prompt(match_data, analysis, game)
     providers = provider_chain(llm_api_key, groq_api_key)
     team_validation_failed = False
@@ -194,7 +268,8 @@ async def generate_ai_coaching_debrief(match_data: dict, analysis: dict, game: G
                 if not content:
                     continue
 
-                errors = find_team_label_errors(content, team_by_hero)
+                errors = find_claim_errors(content, team_by_hero, abilities_by_hero,
+                                           known_abilities, item_names)
                 if errors:
                     corrected = await request_completion(
                         session, provider_name, url, headers, model_slug,
@@ -203,10 +278,11 @@ async def generate_ai_coaching_debrief(match_data: dict, analysis: dict, game: G
                     )
                     if corrected:
                         content = corrected
-                        errors = find_team_label_errors(content, team_by_hero)
+                        errors = find_claim_errors(content, team_by_hero, abilities_by_hero,
+                                                   known_abilities, item_names)
                     if errors:
                         team_validation_failed = True
-                        print(f"[{provider_name}] Team attribution failed validation: {'; '.join(errors)}", flush=True)
+                        print(f"[{provider_name}] Claims failed validation: {'; '.join(errors)}", flush=True)
                         continue
 
                 print(f"[{provider_name}] Generated a team-validated debrief with {model_slug}.", flush=True)

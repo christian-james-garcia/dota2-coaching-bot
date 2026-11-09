@@ -88,3 +88,85 @@ def test_the_correction_prompt_quotes_the_rosters_and_the_error():
     assert "Verified Radiant: Lycan" in text
     assert "Verified Dire: Techies" in text
     assert "Techies is Dire, not Radiant" in text
+
+
+ABILITIES = {
+    "Keeper of the Light": ["Illuminate", "Blinding Light", "Chakra Magic", "Spirit Form"],
+    "Lycan": ["Summon Wolves", "Feral Impulse", "Shapeshift"],
+    "Techies": ["Sticky Bomb", "Reactive Tazer", "Blast Off!"],
+}
+KNOWN = [a for abilities in ABILITIES.values() for a in abilities] + ["Boundless Strike", "Mischief"]
+
+
+def _claim_errors(text, item_names=()):
+    return coaching_module().find_ability_attribution_errors(
+        text, ABILITIES, KNOWN, item_names
+    )
+
+
+def test_an_ability_credited_to_its_owner_is_accepted():
+    assert _claim_errors("Lycan used Shapeshift to chase.") == []
+    assert _claim_errors("Keeper of the Light's Chakra Magic refilled mana.") == []
+
+
+def test_an_ability_credited_to_the_wrong_hero_is_caught():
+    assert _claim_errors("Lycan used Chakra Magic to refill mana.") != []
+    assert _claim_errors("Techies' Shapeshift closed the gap.") != []
+
+
+def test_an_ability_no_hero_in_the_match_owns_is_caught():
+    assert _claim_errors("Lycan opened with Boundless Strike.") != []
+
+
+def test_an_ability_mentioned_without_a_hero_is_not_flagged():
+    # The prompt allows discussing an ability in general terms.
+    assert _claim_errors("Shapeshift is the win condition in this draft.") == []
+
+
+def test_a_line_break_is_not_an_attribution():
+    assert _claim_errors("Heroes: Lycan\nChakra Magic was cast early.") == []
+
+
+def test_an_ability_name_that_is_also_an_item_is_skipped():
+    abilities = dict(ABILITIES)
+    known = KNOWN + ["Blink"]
+    # "Blink" is both an ability name and an item every hero buys.
+    errors = coaching_module().find_ability_attribution_errors(
+        "Techies Blink Dagger timing was late.", abilities, known, item_names=["Blink"]
+    )
+    assert errors == []
+
+
+def test_short_ability_names_are_not_checked():
+    # Too collision-prone, and a false positive costs the whole section.
+    errors = coaching_module().find_ability_attribution_errors(
+        "Lycan Howl echoed.", {"Lycan": ["Shapeshift"]}, ["Howl"], ()
+    )
+    assert errors == []
+
+
+def test_find_claim_errors_combines_both_checks():
+    combine = coaching_module().find_claim_errors
+    text = "Radiant Techies used Chakra Magic."
+    errors = combine(text, TEAMS, ABILITIES, KNOWN, ())
+    assert len(errors) >= 2, errors
+    assert any("not Radiant" in e for e in errors)
+    assert any("not Techies's ability" in e or "is not Techies" in e for e in errors)
+
+
+def test_no_mentioned_ability_means_no_work():
+    assert coaching_module().find_ability_attribution_errors(
+        "A clean draft with no spell names.", ABILITIES, KNOWN, ()
+    ) == []
+
+
+def test_another_heros_action_in_the_same_sentence_is_not_a_misattribution():
+    # A wildcard gap between hero and ability would read this as a claim about
+    # Lycan. The verb list is what keeps it from doing so.
+    text = "Lycan pressured the lane while Keeper of the Light used Chakra Magic."
+    assert _claim_errors(text) == []
+
+
+def test_a_possessive_on_a_hero_name_ending_in_s_is_understood():
+    assert _claim_errors("Techies' Shapeshift closed the gap.") != []
+    assert _claim_errors("Techies' Sticky Bomb hit three heroes.") == []
