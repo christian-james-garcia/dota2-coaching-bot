@@ -13,8 +13,9 @@ import json
 import os
 import sys
 
-from _support import FIXTURES, analysis_module, coaching_module, fixture, game_data, \
-    main_module, match_without_full_five_v_fives, match_without_teamfights
+from _support import FIXTURES, analysis_module, coaching_module, delivery_module, \
+    fixture, game_data, main_module, match_without_full_five_v_fives, \
+    match_without_teamfights
 
 GOLDEN = os.path.join(FIXTURES, "golden_output.json")
 
@@ -32,7 +33,7 @@ def _actual():
         "tracked_steam_ids": tracked,
         "analysis": analysis,
         "panel": panel,
-        "panel_chunks": bot.chunk_debrief(panel),
+        "panel_chunks": delivery_module().chunk_debrief(panel),
         "item_catalog_size": len(game.item_catalog()),
         "coach_prompt": coaching_module().build_coach_prompt(match, analysis, game),
         "no_full_5v5": module.summarize_teamfights(match_without_full_five_v_fives(), game, []),

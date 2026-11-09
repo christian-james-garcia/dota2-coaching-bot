@@ -134,7 +134,17 @@ def _install_stubs():
             return types.SimpleNamespace(message_content=False)
 
     discord.Intents = _Intents
-    discord.Embed = type("Embed", (), {"__init__": lambda self, **k: None})
+    class Embed:
+        """Records what was set, so delivery tests can assert on it."""
+
+        def __init__(self, **fields):
+            self.fields = dict(fields)
+            self.footer = None
+
+        def set_footer(self, text=None):
+            self.footer = text
+
+    discord.Embed = Embed
     discord.Color = types.SimpleNamespace(purple=lambda: None)
     discord.DiscordException = type("DiscordException", (Exception,), {})
 
@@ -194,6 +204,13 @@ def analysis_module():
 def tracked_ids(match):
     """The first real account id in a match, as a stable tracked-player choice."""
     return sorted(p["account_id"] for p in match["players"] if p.get("account_id"))[:1]
+
+
+def delivery_module():
+    """The Discord delivery module, with stubs already installed."""
+    main_module()
+    import delivery
+    return delivery
 
 
 def coaching_module():

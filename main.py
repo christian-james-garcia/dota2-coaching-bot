@@ -11,6 +11,7 @@ from discord.ext import commands, tasks
 
 from analysis import build_match_analysis
 from coaching import generate_ai_coaching_debrief
+from delivery import send_debrief
 from facts import build_verified_match_facts
 from gamedata import GameData
 from reporting import report_unexpected
@@ -388,53 +389,8 @@ async def fetch_parsed_match(session: aiohttp.ClientSession, match_id: int):
 
 
 
-def balanced_split_point(text: str, split_at: int) -> int:
-    """Move a split point back until it is not inside a ** ** pair.
-
-    Discord renders a chunk on its own, so a bold marker separated from its
-    partner shows up as literal asterisks. The prompt asks for bold on the key
-    takeaways, so an unbalanced split disfigures exactly the emphasized text.
-    Falls back to the original point when no balanced boundary exists.
-    """
-    candidate = split_at
-    while candidate > 0 and text[:candidate].count("**") % 2:
-        previous = max(text.rfind("\n", 0, candidate), text.rfind(" ", 0, candidate))
-        if previous <= 0:
-            return split_at
-        candidate = previous
-    return candidate or split_at
 
 
-def chunk_debrief(text: str, max_len: int = 3800) -> list:
-    """Split text into chunks that stay below Discord's embed description limit."""
-    if not text:
-        return []
-
-    chunks = []
-    current = ""
-    for paragraph in text.split("\n\n"):
-        pieces = []
-        remaining = paragraph
-        while len(remaining) > max_len:
-            split_at = max(remaining.rfind("\n", 0, max_len), remaining.rfind(" ", 0, max_len))
-            if split_at < max_len // 2:
-                split_at = max_len
-            split_at = balanced_split_point(remaining, split_at)
-            pieces.append(remaining[:split_at].rstrip())
-            remaining = remaining[split_at:].lstrip()
-        pieces.append(remaining)
-
-        for piece in pieces:
-            addition = piece if not current else "\n\n" + piece
-            if len(current) + len(addition) > max_len:
-                if current:
-                    chunks.append(current)
-                current = piece
-            else:
-                current += addition
-    if current:
-        chunks.append(current)
-    return chunks
 
 
 @tasks.loop(minutes=3)
@@ -490,19 +446,7 @@ async def check_recent_matches():
 
             verified_facts = build_verified_match_facts(match_data, analysis, GAME)
             complete_debrief = f"{verified_facts}\n\n---\n\n{debrief_text}"
-            text_parts = chunk_debrief(complete_debrief)
-            total_parts = len(text_parts)
-            for idx, part in enumerate(text_parts, 1):
-                title = f"🧠 Dota 2 AI Debrief — Match {match_id}"
-                if total_parts > 1:
-                    title += f" (Part {idx}/{total_parts})"
-                embed = discord.Embed(
-                    title=title,
-                    description=part,
-                    color=discord.Color.purple(),
-                )
-                embed.set_footer(text=f"OpenDota Telemetry Engine | Part {idx} of {total_parts}")
-                await channel.send(embed=embed)
+            await send_debrief(channel, match_id, complete_debrief)
 
             STATE.complete(account_id, match_id)
             print(f"[QUEUE] Successfully delivered match {match_id}.", flush=True)
