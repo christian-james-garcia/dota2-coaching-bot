@@ -94,12 +94,9 @@ Cases:
 
 ### 5. `MatchState` backoff
 
-After refactor step 2. The schedule is
-`min(3600, 60 * (2 ** min(attempts - 1, 5)))`.
-
-Note the inner `min(..., 5)` caps the exponent, so the real ceiling is 60 × 2⁵ = **1920s (32
-minutes)** and the outer `min(3600, ...)` is unreachable dead code. Decide which cap you actually
-want before pinning it in a test, then delete the other.
+After refactor step 2. The schedule is now
+`min(RETRY_BACKOFF_MAX_SECONDS, RETRY_BACKOFF_BASE_SECONDS * 2**(attempts - 1))`, a single cap at
+1920s (32 minutes).
 
 Cases:
 - attempt 1 → 60s, attempt 2 → 120s, attempt 6 → 1920s
@@ -108,6 +105,19 @@ Cases:
 - the atomic write leaves no `.tmp` file behind on success
 - a corrupt state file on load → empty state, no raise
 - the legacy single-cursor file migrates to the per-account shape
+
+## Regression cases from fixes already made
+
+Write these alongside item 1, since they are the cheapest tests in the file and both bugs shipped
+unnoticed:
+
+- **`summarize_teamfights` on a match with a full 5v5 fight returns without raising** (`c5129ff`).
+  The per-hero totals dict is keyed by `(team, hero)`; a test that asserts non-empty `players` on
+  the parsed fixture would have caught the mismatched lookup immediately.
+- **`load_hero_constants` populates `HERO_ABILITY_MAP` for every hero** (`e253621`). The real
+  assertion is `len(HERO_ABILITY_MAP) == len(HERO_NAME_MAP)`. A fixture containing Monkey King's
+  nested ability list is enough; no network needed.
+- **`defer_pending_match` never exceeds `RETRY_BACKOFF_MAX_SECONDS`** (`8aafab5`).
 
 ## Not worth testing yet
 

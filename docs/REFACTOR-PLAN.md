@@ -88,7 +88,7 @@ reordering here trades the at-least-once guarantee for silent match loss.
 `locals()`. If the loop body moves into a helper, that introspection stops working and the
 deferral on unexpected errors silently does nothing.
 
-## A real bug this surfaced
+## A real bug this surfaced (fixed in 2170689)
 
 `extract_match_telemetry` and `summarize_teamfights` each run **twice per match**:
 
@@ -101,7 +101,9 @@ deferral on unexpected errors silently does nothing.
 `summarize_teamfights` is 150 lines of nested iteration over the teamfight log, so this is not
 free. It also means a future change to extraction has two call sites that must agree.
 
-Fix as part of step 4: compute once in `check_recent_matches`, pass the results into both.
+Fixed ahead of the refactor: `build_match_analysis` derives both once in the poll loop and passes
+the result to each consumer. Step 4 now only has to move the pure functions, not restructure
+their callers.
 
 ## Migration order
 
@@ -136,7 +138,7 @@ given a match id, so it is a usable golden output. The LLM sections are not.
 Note: step 3 changes the signature of five functions at once. That is the step most worth having a
 test for first, which is the argument for doing TEST-PLAN step 1 before this one.
 
-## A second, smaller finding
+## A second, smaller finding (fixed in 8aafab5)
 
 `defer_pending_match` computes its delay as:
 
@@ -144,6 +146,28 @@ test for first, which is the argument for doing TEST-PLAN step 1 before this one
 delay_seconds = min(3600, 60 * (2 ** min(attempts - 1, 5)))
 ```
 
-The inner `min(attempts - 1, 5)` caps the exponent at 5, so the maximum delay is 60 × 2⁵ = 1920s
-(32 minutes). The outer `min(3600, ...)` therefore never binds — it is dead code that reads like a
-one-hour ceiling. Pick the intended cap and remove the redundant one.
+The inner `min(attempts - 1, 5)` capped the exponent at 5, so the maximum delay was 60 × 2⁵ = 1920s
+(32 minutes) and the outer `min(3600, ...)` never bound — dead code that read like a one-hour
+ceiling. Now expressed as `RETRY_BACKOFF_BASE_SECONDS` and `RETRY_BACKOFF_MAX_SECONDS` with a
+single cap. Behavior is unchanged at every attempt count.
+
+## Two correctness bugs found while writing this plan
+
+Both are fixed, and both are worth knowing about before the split because they show where this
+file's size actually hurts.
+
+**`summarize_teamfights` raised `KeyError` on every full 5v5 fight** (`c5129ff`). Totals were
+stored under the tuple `(team, hero)` and read back by hero name alone. The poll loop's broad
+`except Exception` swallowed it into a `[POLL ERROR]` and a deferral, so the symptom was a match
+that retried forever rather than a stack trace. A 150-line function with no test is exactly where
+this hides.
+
+**Hero ability constants were silently empty** (`e253621`). OpenDota nests a list inside
+`hero_abilities` for Monkey King, which made `name in abilities` raise `unhashable type: list` and
+abort the loop before `HERO_ABILITY_MAP` was assigned — losing ability data for all 127 heroes
+because of one. The prompt declares that data authoritative, so the guard it supports was inert.
+
+The shared lesson for the refactor: both failures were invisible because the broad handlers in
+`load_hero_constants` and `check_recent_matches` convert bugs into retries. When these move into
+modules, narrow the `except Exception` clauses to the exceptions actually expected from I/O, so a
+`KeyError` or `TypeError` in pure logic surfaces instead of becoming a backoff.
