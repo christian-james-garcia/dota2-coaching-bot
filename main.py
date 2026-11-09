@@ -608,10 +608,20 @@ async def fetch_opendota_match(session: aiohttp.ClientSession, match_id: int):
 
 
 def match_has_parsed_player_data(match_data: Optional[dict]) -> bool:
-    """Wait for replay-derived fields before asking for item and lane analysis."""
-    players = (match_data or {}).get("players") or []
+    """Wait for replay-derived fields before asking for item and lane analysis.
+
+    `version` is set only once OpenDota has parsed the replay, so it is the
+    authoritative marker. `benchmarks` is not one: it is present, with null
+    percentiles, on matches that have never been parsed. Testing for its
+    presence accepted every unparsed match, which made the retry loop in
+    fetch_parsed_match pointless and let debriefs be built from empty data.
+    """
+    match_data = match_data or {}
+    if match_data.get("version") is None:
+        return False
+    players = match_data.get("players") or []
     return bool(players) and any(
-        "purchase_log" in player or "lh_ten" in player or "benchmarks" in player
+        player.get("purchase_log") or player.get("lh_ten") is not None
         for player in players
     )
 
