@@ -4,7 +4,7 @@ build_verified_match_facts and generate_ai_coaching_debrief both called
 extract_match_telemetry and summarize_teamfights on the same match, so every
 debrief parsed it twice and left two call sites that had to stay in agreement.
 """
-from _support import fixture, with_constants
+from _support import fixture, game_data, main_module
 
 
 def _tracked(match):
@@ -12,7 +12,8 @@ def _tracked(match):
 
 
 def test_analysis_runs_each_helper_once():
-    bot = with_constants()
+    bot = main_module()
+    game = game_data()
     match = fixture("match_parsed.json")
     calls = {"telemetry": 0, "teamfights": 0}
     real_telemetry = bot.extract_match_telemetry
@@ -31,8 +32,8 @@ def test_analysis_runs_each_helper_once():
     bot.summarize_teamfights = counting_teamfights
     bot.TRACKED_STEAM_IDS = _tracked(match)
     try:
-        analysis = bot.build_match_analysis(match)
-        bot.build_verified_match_facts(match, analysis)
+        analysis = bot.build_match_analysis(match, game)
+        bot.build_verified_match_facts(match, analysis, game)
     finally:
         bot.extract_match_telemetry = real_telemetry
         bot.summarize_teamfights = real_teamfights
@@ -42,8 +43,7 @@ def test_analysis_runs_each_helper_once():
 
 
 def test_analysis_exposes_every_key_its_consumers_read():
-    bot = with_constants()
-    analysis = bot.build_match_analysis(fixture("match_parsed.json"))
+    analysis = main_module().build_match_analysis(fixture("match_parsed.json"), game_data())
     assert set(analysis) == {"radiant", "dire", "tracked_players", "all_players", "teamfights"}
     assert len(analysis["radiant"]) == 5
     assert len(analysis["dire"]) == 5
@@ -51,8 +51,7 @@ def test_analysis_exposes_every_key_its_consumers_read():
 
 
 def test_rosters_are_disjoint():
-    bot = with_constants()
-    analysis = bot.build_match_analysis(fixture("match_parsed.json"))
+    analysis = main_module().build_match_analysis(fixture("match_parsed.json"), game_data())
     teams = {p["hero"]: p["team"] for p in analysis["all_players"]}
     assert set(teams.values()) == {"Radiant", "Dire"}
     for hero in analysis["radiant"]:
@@ -62,12 +61,15 @@ def test_rosters_are_disjoint():
 
 
 def test_the_panel_renders_from_the_shared_analysis():
-    bot = with_constants()
+    bot = main_module()
+    game = game_data()
     match = fixture("match_parsed.json")
     original = bot.TRACKED_STEAM_IDS
     bot.TRACKED_STEAM_IDS = _tracked(match)
     try:
-        panel = bot.build_verified_match_facts(match, bot.build_match_analysis(match))
+        panel = bot.build_verified_match_facts(
+            match, bot.build_match_analysis(match, game), game
+        )
     finally:
         bot.TRACKED_STEAM_IDS = original
     assert "VERIFIED OPENDOTA FACTS" in panel

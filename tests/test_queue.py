@@ -40,14 +40,14 @@ def test_backoff_formula_is_capped():
 
 def test_transient_failures_never_park_a_match():
     queue = _queue()
-    for _ in range(main_module().BUG_RETRY_LIMIT + 5):
+    for _ in range(state_module().BUG_RETRY_LIMIT + 5):
         queue.defer(1, 100, "a transient service failure")
     assert not queue.find(1, 100).get("blocked")
 
 
 def test_a_defect_parks_the_match_at_the_limit():
     queue = _queue()
-    limit = main_module().BUG_RETRY_LIMIT
+    limit = state_module().BUG_RETRY_LIMIT
     for attempt in range(1, limit):
         queue.defer(1, 100, "an unexpected processing error", fatal=True)
         assert not queue.find(1, 100).get("blocked"), f"parked early on attempt {attempt}"
@@ -57,7 +57,7 @@ def test_a_defect_parks_the_match_at_the_limit():
 
 def test_a_parked_match_does_not_hold_up_the_queue():
     queue = _queue()
-    for _ in range(main_module().BUG_RETRY_LIMIT):
+    for _ in range(state_module().BUG_RETRY_LIMIT):
         queue.defer(1, 100, "an unexpected processing error", fatal=True)
     queue.find(1, 100)["next_attempt_at"] = 0
     eligible = [item["match_id"] for item in queue.eligible()]
@@ -74,7 +74,7 @@ def test_deferring_an_unknown_match_is_a_no_op():
 def test_state_round_trips_and_a_restart_releases_parked_matches():
     MatchState = state_module().MatchState
     queue = _queue()
-    for _ in range(main_module().BUG_RETRY_LIMIT):
+    for _ in range(state_module().BUG_RETRY_LIMIT):
         queue.defer(1, 100, "an unexpected processing error", fatal=True)
     queue.save()
     assert not list(queue.path.parent.glob("*.tmp")), "atomic write left a temp file"

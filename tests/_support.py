@@ -191,9 +191,15 @@ def state_module():
     return state
 
 
-def with_constants():
-    """Return main.py with its game-data maps loaded from the fixture."""
-    module = main_module()
-    if not module.HERO_NAME_MAP:
-        asyncio.run(module.load_hero_constants(force=True))
-    return module
+_game = None
+
+
+def game_data():
+    """A GameData loaded from the constants fixture, built once and reused."""
+    global _game
+    if _game is None:
+        main_module()  # installs the stubs GameData.refresh needs
+        from gamedata import GameData
+        _game = GameData()
+        asyncio.run(_game.refresh(force=True))
+    return _game

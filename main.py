@@ -3,7 +3,6 @@ import json
 import os
 import re
 import time
-import traceback
 from collections import Counter, defaultdict
 from typing import Optional
 
@@ -12,13 +11,12 @@ import discord
 from aiohttp import web
 from discord.ext import commands, tasks
 
+from gamedata import GameData
+from reporting import report_unexpected
 from state import MatchState
 from config import (
-    BUG_RETRY_LIMIT,
     CHANNEL_ID,
     DISCORD_BOT_TOKEN,
-    GAME_DATA_REFRESH_SECONDS,
-    GAME_DATA_RETRY_SECONDS,
     GROQ_API_KEY,
     HISTORY_PAGE_SIZE,
     LLM_API_KEY,
@@ -27,29 +25,15 @@ from config import (
     RANKED_MATCH_SCAN_MAX_PAGES,
     RANKED_MATCH_SCAN_PAGE_SIZE,
     RANKED_SAMPLE_CACHE_SECONDS,
-    RETRY_BACKOFF_BASE_SECONDS,
-    RETRY_BACKOFF_MAX_SECONDS,
     STATE_FILE,
     TRACKED_STEAM_IDS,
     TRANSIENT_ERRORS,
 )
 
-HERO_NAME_MAP = {}
-HERO_UNIT_NAME_MAP = {}
-HERO_ABILITY_MAP = {}
-HERO_ABILITY_DETAILS_MAP = {}
-ABILITY_NAME_MAP = {}
-ITEM_NAME_MAP = {}
-ITEM_KEY_NAME_MAP = {}
-ITEM_DETAILS_MAP = {}
-PATCH_NAME_MAP = {}
-CURRENT_PATCH_ID = None
-CURRENT_PATCH_NAME = None
-GAME_DATA_LAST_REFRESH = 0.0
-GAME_DATA_LAST_ATTEMPT = 0.0
 RANKED_HERO_SAMPLE_CACHE = {}
 STATE = MatchState(STATE_FILE)
 STATE_LOADED = False
+GAME = GameData()
 WEB_RUNNER = None
 
 intents = discord.Intents.default()
@@ -75,17 +59,6 @@ async def start_web_server():
     await site.start()
     WEB_RUNNER = runner
     print(f"[SERVER] Web server successfully bound to port {port}", flush=True)
-
-
-def report_unexpected(where: str, exc: BaseException) -> None:
-    """Log a logic error distinctly so it is not read as a service outage.
-
-    Every I/O block here degrades gracefully on a transient failure, which is
-    correct, but the same handler used to absorb KeyError and TypeError as well.
-    A defect then looked exactly like OpenDota having a bad minute.
-    """
-    print(f"[BUG] {where}: {type(exc).__name__}: {exc}", flush=True)
-    traceback.print_exc()
 
 
 async def discover_unseen_matches(session: aiohttp.ClientSession, account_id: int):
@@ -171,157 +144,8 @@ async def discover_unseen_matches(session: aiohttp.ClientSession, account_id: in
     STATE.save()
 
 
-async def load_hero_constants(force: bool = False):
-    """Refresh OpenDota's game constants so reports use current patch data."""
-    global HERO_NAME_MAP, HERO_UNIT_NAME_MAP, HERO_ABILITY_MAP, HERO_ABILITY_DETAILS_MAP, ABILITY_NAME_MAP
-    global ITEM_NAME_MAP, ITEM_KEY_NAME_MAP, ITEM_DETAILS_MAP, PATCH_NAME_MAP
-    global CURRENT_PATCH_ID, CURRENT_PATCH_NAME, GAME_DATA_LAST_REFRESH, GAME_DATA_LAST_ATTEMPT
-    now = time.time()
-    if not force and now - GAME_DATA_LAST_REFRESH < GAME_DATA_REFRESH_SECONDS:
-        return
-    if not force and now - GAME_DATA_LAST_ATTEMPT < GAME_DATA_RETRY_SECONDS:
-        return
-    GAME_DATA_LAST_ATTEMPT = now
-
-    timeout = aiohttp.ClientTimeout(total=20)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        refreshed_everything = True
-
-        try:
-            async with session.get("https://api.opendota.com/api/constants/patch") as resp:
-                if resp.status == 200:
-                    patches = await resp.json()
-                    PATCH_NAME_MAP = {int(p["id"]): p["name"] for p in patches if p.get("id") is not None}
-                    if PATCH_NAME_MAP:
-                        CURRENT_PATCH_ID = max(PATCH_NAME_MAP)
-                        CURRENT_PATCH_NAME = PATCH_NAME_MAP[CURRENT_PATCH_ID]
-                        print(f"[PATCH] Current OpenDota game-data patch: {CURRENT_PATCH_NAME} (id {CURRENT_PATCH_ID}).", flush=True)
-                    else:
-                        refreshed_everything = False
-                else:
-                    refreshed_everything = False
-                    print(f"[PATCH] Failed to fetch patch constants. Status: {resp.status}", flush=True)
-        except TRANSIENT_ERRORS as exc:
-            refreshed_everything = False
-            print(f"[PATCH] Could not load patch constants: {exc}", flush=True)
-        except Exception as exc:
-            refreshed_everything = False
-            report_unexpected("parsing patch constants", exc)
-
-        try:
-            async with session.get("https://api.opendota.com/api/heroes") as resp:
-                if resp.status == 200:
-                    heroes = await resp.json()
-                    HERO_NAME_MAP = {h["id"]: h["localized_name"] for h in heroes}
-                    HERO_UNIT_NAME_MAP = {h["id"]: h["name"] for h in heroes}
-                    print(f"[HEROES] Loaded {len(HERO_NAME_MAP)} hero constants.", flush=True)
-                else:
-                    refreshed_everything = False
-                    print(f"[HEROES] Failed to fetch hero constants. Status: {resp.status}", flush=True)
-        except TRANSIENT_ERRORS as exc:
-            refreshed_everything = False
-            print(f"[HEROES] Could not load hero constants: {exc}", flush=True)
-        except Exception as exc:
-            refreshed_everything = False
-            report_unexpected("parsing hero constants", exc)
-
-        try:
-            async with session.get("https://api.opendota.com/api/constants/items") as resp:
-                if resp.status == 200:
-                    items = await resp.json()
-                    ITEM_NAME_MAP = {
-                        int(item["id"]): item.get("dname", key.replace("_", " ").title())
-                        for key, item in items.items()
-                        if item.get("id") is not None
-                    }
-                    ITEM_KEY_NAME_MAP = {
-                        key: item.get("dname", key.replace("_", " ").title())
-                        for key, item in items.items()
-                    }
-                    ITEM_DETAILS_MAP = {
-                        key: {
-                            "name": item.get("dname", key.replace("_", " ").title()),
-                            "description": item.get("desc") or " ".join(
-                                ability.get("description", "") for ability in item.get("abilities", [])
-                                if ability.get("description")
-                            ),
-                        }
-                        for key, item in items.items()
-                    }
-                    print(f"[ITEMS] Loaded {len(ITEM_NAME_MAP)} item names.", flush=True)
-                else:
-                    refreshed_everything = False
-                    print(f"[ITEMS] Failed to fetch item constants. Status: {resp.status}", flush=True)
-        except TRANSIENT_ERRORS as exc:
-            refreshed_everything = False
-            print(f"[ITEMS] Could not load item constants: {exc}", flush=True)
-        except Exception as exc:
-            refreshed_everything = False
-            report_unexpected("parsing item constants", exc)
-
-        try:
-            async with session.get("https://api.opendota.com/api/constants/hero_abilities") as hero_resp:
-                async with session.get("https://api.opendota.com/api/constants/abilities") as ability_resp:
-                    if hero_resp.status == 200 and ability_resp.status == 200:
-                        hero_abilities = await hero_resp.json()
-                        abilities = await ability_resp.json()
-                        ABILITY_NAME_MAP = {
-                            ability_key: ability.get("dname", ability_key)
-                            for ability_key, ability in abilities.items()
-                            if ability.get("dname")
-                        }
-                        ability_map = {}
-                        ability_details_map = {}
-                        for hero_id, unit_name in HERO_UNIT_NAME_MAP.items():
-                            raw_names = hero_abilities.get(unit_name, {}).get("abilities", [])
-                            # OpenDota nests a list here for heroes with a second
-                            # form (Monkey King). An unflattened list is unhashable,
-                            # so the `name in abilities` test below used to raise and
-                            # abort the whole loop, losing ability data for every hero.
-                            names = []
-                            for entry in raw_names:
-                                if isinstance(entry, list):
-                                    names.extend(entry)
-                                else:
-                                    names.append(entry)
-                            names = [name for name in names if isinstance(name, str)]
-                            ability_map[HERO_NAME_MAP[hero_id]] = [
-                                abilities[name].get("dname", name)
-                                for name in names
-                                if name in abilities and abilities[name].get("dname")
-                            ]
-                            ability_details_map[HERO_NAME_MAP[hero_id]] = [
-                                {
-                                    "name": abilities[name].get("dname", name),
-                                    "description": abilities[name].get("desc", ""),
-                                }
-                                for name in names
-                                if name in abilities and abilities[name].get("dname")
-                            ]
-                        HERO_ABILITY_MAP = ability_map
-                        HERO_ABILITY_DETAILS_MAP = ability_details_map
-                        print(f"[ABILITIES] Loaded current abilities for {len(HERO_ABILITY_MAP)} heroes.", flush=True)
-                    else:
-                        refreshed_everything = False
-                        print(
-                            f"[ABILITIES] Could not load ability constants: "
-                            f"hero HTTP {hero_resp.status}, abilities HTTP {ability_resp.status}",
-                            flush=True,
-                        )
-        except TRANSIENT_ERRORS as exc:
-            refreshed_everything = False
-            print(f"[ABILITIES] Could not load ability constants: {exc}", flush=True)
-        except Exception as exc:
-            refreshed_everything = False
-            report_unexpected("parsing ability constants", exc)
-
-        if refreshed_everything:
-            GAME_DATA_LAST_REFRESH = time.time()
-            print(f"[CONSTANTS] Current hero, item, ability, and patch data refreshed.", flush=True)
-
-
 async def get_ranked_hero_sample(
-    session: aiohttp.ClientSession, hero_id: int, patch_id: Optional[int]
+    session: aiohttp.ClientSession, hero_id: int, patch_id: Optional[int], game: GameData
 ) -> dict:
     """Aggregate public ranked matches for this hero, explicitly verifying lobby and patch."""
     if patch_id is None:
@@ -400,7 +224,7 @@ async def get_ranked_hero_sample(
             },
             "duration": detail.get("duration") or match.get("duration"),
             "final_items": [
-                ITEM_NAME_MAP.get(hero_player.get(f"item_{slot}"), "Unknown item")
+                game.item_names.get(hero_player.get(f"item_{slot}"), "Unknown item")
                 for slot in range(6)
                 if hero_player.get(f"item_{slot}")
             ],
@@ -472,13 +296,13 @@ async def get_ranked_hero_sample(
             {"name": item, "matches": count, "sample_rate_pct": round(count / len(records) * 100, 1)}
             for item, count in item_counts.most_common(6)
         ] if records else [],
-        "scope": f"up to {RANKED_DETAIL_SAMPLE_LIMIT} recent public ranked matches for this hero in patch {PATCH_NAME_MAP.get(int(patch_id), patch_id)}",
+        "scope": f"up to {RANKED_DETAIL_SAMPLE_LIMIT} recent public ranked matches for this hero in patch {game.patch_names.get(int(patch_id), patch_id)}",
     }
     RANKED_HERO_SAMPLE_CACHE[cache_key] = {"fetched_at": time.time(), "sample": sample}
     return dict(sample)
 
 
-async def add_ranked_context(session: aiohttp.ClientSession, match_data: dict) -> None:
+async def add_ranked_context(session: aiohttp.ClientSession, match_data: dict, game: GameData) -> None:
     """Attach same-patch ranked aggregates for each tracked hero in this match."""
     patch_id = match_data.get("patch")
     context = {}
@@ -492,6 +316,7 @@ async def add_ranked_context(session: aiohttp.ClientSession, match_data: dict) -
             session,
             int(hero_id),
             int(patch_id) if patch_id is not None else None,
+            game,
         )
     match_data["_ranked_hero_samples"] = context
 
@@ -550,7 +375,7 @@ async def fetch_parsed_match(session: aiohttp.ClientSession, match_id: int):
     return None
 
 
-def extract_match_telemetry(match_data: dict):
+def extract_match_telemetry(match_data: dict, game: GameData):
     radiant_heroes = []
     dire_heroes = []
     detailed_tracked_players = []
@@ -567,7 +392,7 @@ def extract_match_telemetry(match_data: dict):
 
     for player in match_data.get("players", []):
         hero_id = player.get("hero_id")
-        hero_name = HERO_NAME_MAP.get(hero_id, f"Hero_{hero_id}")
+        hero_name = game.hero_name(hero_id)
         team = "Radiant" if player.get("isRadiant") else "Dire"
 
         if player.get("isRadiant"):
@@ -580,7 +405,7 @@ def extract_match_telemetry(match_data: dict):
         for purchase in purchase_log:
             item_key = purchase.get("key")
             if item_key in key_items and item_key not in item_timings:
-                item_name = ITEM_KEY_NAME_MAP.get(item_key, item_key.replace("_", " ").title())
+                item_name = game.item_key_names.get(item_key, item_key.replace("_", " ").title())
                 item_timings[item_name] = f"{purchase.get('time', 0) // 60}m"
 
         benchmarks = player.get("benchmarks") or {}
@@ -589,7 +414,7 @@ def extract_match_telemetry(match_data: dict):
         assists = player.get("assists") or 0
         team_kills = match_data.get("radiant_score" if player.get("isRadiant") else "dire_score") or 0
         final_items = [
-            ITEM_NAME_MAP.get(player.get(f"item_{slot}", 0), "Unknown item")
+            game.item_names.get(player.get(f"item_{slot}", 0), "Unknown item")
             for slot in range(6)
             if player.get(f"item_{slot}", 0)
         ]
@@ -610,8 +435,8 @@ def extract_match_telemetry(match_data: dict):
             "tower_damage": player.get("tower_damage"),
             "final_items": final_items,
             "key_item_timings": item_timings,
-            "current_abilities": HERO_ABILITY_MAP.get(hero_name, []),
-            "current_ability_details": HERO_ABILITY_DETAILS_MAP.get(hero_name, []),
+            "current_abilities": game.hero_abilities.get(hero_name, []),
+            "current_ability_details": game.hero_ability_details.get(hero_name, []),
             "ranked_hero_sample": (match_data.get("_ranked_hero_samples") or {}).get(str(hero_id)),
         }
         all_players.append(player_summary)
@@ -621,7 +446,7 @@ def extract_match_telemetry(match_data: dict):
     return radiant_heroes, dire_heroes, detailed_tracked_players, all_players
 
 
-def summarize_teamfights(match_data: dict) -> dict:
+def summarize_teamfights(match_data: dict, game: GameData) -> dict:
     """Summarize recorded full 5v5s and player contributions without guessing actions."""
     roster = match_data.get("players") or []
     events = match_data.get("teamfights") or []
@@ -672,7 +497,7 @@ def summarize_teamfights(match_data: dict) -> dict:
             fight_totals[team]["healing"] += healing
             fight_totals[team]["buybacks"] += buybacks
             player_rows.append({
-                "hero": HERO_NAME_MAP.get(player.get("hero_id"), f"Hero_{player.get('hero_id')}"),
+                "hero": game.hero_name(player.get("hero_id")),
                 "team": team,
                 "account_id": player.get("account_id"),
                 "active": active,
@@ -728,11 +553,11 @@ def summarize_teamfights(match_data: dict) -> dict:
             total["hero_kills"] += row["hero_kills"]
             total["tracked_player"] = total["tracked_player"] or row["account_id"] in TRACKED_STEAM_IDS
             total["ability_uses"].update({
-                ABILITY_NAME_MAP.get(key, key): int(count or 0)
+                game.ability_names.get(key, key): int(count or 0)
                 for key, count in row["ability_uses"].items()
             })
             total["item_uses"].update({
-                ITEM_KEY_NAME_MAP.get(key, key.replace("_", " ").title()): int(count or 0)
+                game.item_key_names.get(key, key.replace("_", " ").title()): int(count or 0)
                 for key, count in row["item_uses"].items()
             })
 
@@ -795,24 +620,24 @@ def find_team_label_errors(content: str, team_by_hero: dict) -> list:
     return errors
 
 
-def build_match_analysis(match_data: dict) -> dict:
+def build_match_analysis(match_data: dict, game: GameData) -> dict:
     """Derive telemetry and teamfight data once so each match is parsed a single time.
 
     Both the verified panel and the coaching prompt need the same extraction. Parsing
     per consumer meant summarize_teamfights ran twice over the teamfight log, and left
     two call sites that had to stay in agreement.
     """
-    radiant, dire, tracked_players, all_players = extract_match_telemetry(match_data)
+    radiant, dire, tracked_players, all_players = extract_match_telemetry(match_data, game)
     return {
         "radiant": radiant,
         "dire": dire,
         "tracked_players": tracked_players,
         "all_players": all_players,
-        "teamfights": summarize_teamfights(match_data),
+        "teamfights": summarize_teamfights(match_data, game),
     }
 
 
-def build_verified_match_facts(match_data: dict, analysis: dict) -> str:
+def build_verified_match_facts(match_data: dict, analysis: dict, game: GameData) -> str:
     """Render source data directly so the model cannot alter match facts."""
     radiant = analysis["radiant"]
     dire = analysis["dire"]
@@ -822,8 +647,8 @@ def build_verified_match_facts(match_data: dict, analysis: dict) -> str:
     duration = (match_data.get("duration") or 0) // 60
     winner = "Radiant" if match_data.get("radiant_win") else "Dire"
     match_patch_id = match_data.get("patch")
-    match_patch = PATCH_NAME_MAP.get(int(match_patch_id), f"OpenDota patch id {match_patch_id}") if match_patch_id is not None else "unavailable"
-    current_patch = CURRENT_PATCH_NAME or "unavailable"
+    match_patch = game.patch_label(match_patch_id)
+    current_patch = game.current_patch_name or "unavailable"
     lines = [
         "✨ **MATCH HIGHLIGHTS**",
         f"- **Result:** {winner} **{match_data.get('radiant_score')}-{match_data.get('dire_score')}** in **{duration} min**.",
@@ -987,7 +812,7 @@ def build_verified_match_facts(match_data: dict, analysis: dict) -> str:
             ) or "item frequency unavailable"
             lines.append(
                 f"- **Same-hero ranked baseline for {player['hero']}: {sample['sample_size']} recent public ranked matches "
-                f"in {PATCH_NAME_MAP.get(int(match_patch_id), match_patch)}; {sample['wins']} wins "
+                f"in {game.patch_names.get(int(match_patch_id), match_patch)}; {sample['wins']} wins "
                 f"({sample['win_rate_pct']}%).** {avg_text or 'parsed averages unavailable'}; "
                 f"rate-adjusted stats: {rate_text or 'unavailable'}. "
                 f"Lane roles: {lane_counts}. Common final inventories: {common_items}. "
@@ -1061,24 +886,7 @@ def build_verified_match_facts(match_data: dict, analysis: dict) -> str:
     return "\n".join(lines)
 
 
-def build_current_item_catalog() -> dict:
-    """Return current patch descriptions for a compact set of coaching items."""
-    item_keys = (
-        "black_king_bar", "linkens_sphere", "lotus_orb", "ghost", "glimmer_cape",
-        "force_staff", "hurricane_pike", "aeon_disk", "pipe", "crimson_guard",
-        "heavens_halberd", "orchid", "bloodthorn", "scythe_of_vyse", "shivas_guard",
-        "nullifier", "spirit_vessel", "rod_of_atos", "cyclone", "manta",
-    )
-    catalog = {}
-    for key in item_keys:
-        details = ITEM_DETAILS_MAP.get(key) or {}
-        description = " ".join((details.get("description") or "").split())
-        if details.get("name") and description:
-            catalog[details["name"]] = description[:450]
-    return catalog
-
-
-async def generate_ai_coaching_debrief(match_data: dict, analysis: dict) -> Optional[str]:
+async def generate_ai_coaching_debrief(match_data: dict, analysis: dict, game: GameData) -> Optional[str]:
     radiant_lineup = analysis["radiant"]
     dire_lineup = analysis["dire"]
     tracked_players = analysis["tracked_players"]
@@ -1087,11 +895,10 @@ async def generate_ai_coaching_debrief(match_data: dict, analysis: dict) -> Opti
     team_by_hero = {player["hero"]: player["team"] for player in all_players}
     duration_mins = match_data.get("duration", 0) // 60
     winner = "Radiant" if match_data.get("radiant_win") else "Dire"
-    current_item_catalog = build_current_item_catalog()
+    current_item_catalog = game.item_catalog()
     match_patch_id = match_data.get("patch")
     match_patch_name = (
-        PATCH_NAME_MAP.get(int(match_patch_id), f"OpenDota patch id {match_patch_id}")
-        if match_patch_id is not None else "unavailable"
+        game.patch_label(match_patch_id)
     )
 
     coach_prompt = (
@@ -1100,7 +907,7 @@ async def generate_ai_coaching_debrief(match_data: dict, analysis: dict) -> Opti
         "lane events, or purchases. Say plainly when a field is unavailable.\n\n"
         "FORMATTING: The verified panel starts with concise match highlights. In your coaching sections, use Discord Markdown bold selectively for the most important team insight, the tracked player's key comparison, the recommended improvement, and the practice drill. Do not bold whole paragraphs or every statistic.\n"
         f"The match was played on patch {match_patch_name}. Your current-mechanics reference is OpenDota's "
-        f"latest constants for patch {CURRENT_PATCH_NAME or 'unavailable'}; use those current abilities and the "
+        f"latest constants for patch {game.current_patch_name or 'unavailable'}; use those current abilities and the "
         "item catalog below for current recommendations. Do not claim that current mechanics describe an older "
         "match patch if the two patch versions differ.\n"
         "A separate verified-facts panel is printed from the API response. Do not restate or recalculate "
@@ -1269,7 +1076,7 @@ def chunk_debrief(text: str, max_len: int = 3800) -> list:
 async def check_recent_matches():
     if not TRACKED_STEAM_IDS:
         return
-    await load_hero_constants()
+    await GAME.refresh()
     timeout = aiohttp.ClientTimeout(total=30)
 
     try:
@@ -1305,16 +1112,16 @@ async def check_recent_matches():
                 STATE.defer(account_id, match_id, "OpenDota match data unavailable")
                 return
 
-            await add_ranked_context(session, match_data)
+            await add_ranked_context(session, match_data, GAME)
 
-            analysis = build_match_analysis(match_data)
-            debrief_text = await generate_ai_coaching_debrief(match_data, analysis)
+            analysis = build_match_analysis(match_data, GAME)
+            debrief_text = await generate_ai_coaching_debrief(match_data, analysis, GAME)
             if not debrief_text:
                 print(f"[RETRY] AI providers failed for match {match_id}; will retry next cycle.", flush=True)
                 STATE.defer(account_id, match_id, "AI providers unavailable")
                 return
 
-            verified_facts = build_verified_match_facts(match_data, analysis)
+            verified_facts = build_verified_match_facts(match_data, analysis, GAME)
             complete_debrief = f"{verified_facts}\n\n---\n\n{debrief_text}"
             text_parts = chunk_debrief(complete_debrief)
             total_parts = len(text_parts)
@@ -1347,7 +1154,7 @@ async def check_recent_matches():
 class CoachingBot(commands.Bot):
     async def setup_hook(self):
         # setup_hook runs once per bot process, unlike on_ready which can recur.
-        await load_hero_constants()
+        await GAME.refresh()
         try:
             await start_web_server()
         except OSError as exc:

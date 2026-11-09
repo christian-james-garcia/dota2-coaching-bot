@@ -13,29 +13,30 @@ import json
 import os
 import sys
 
-from _support import FIXTURES, fixture, match_without_full_five_v_fives, \
-    match_without_teamfights, with_constants
+from _support import FIXTURES, fixture, game_data, main_module, \
+    match_without_full_five_v_fives, match_without_teamfights
 
 GOLDEN = os.path.join(FIXTURES, "golden_output.json")
 
 
 def _actual():
-    bot = with_constants()
+    bot = main_module()
+    game = game_data()
     expected = json.load(open(GOLDEN, encoding="utf-8"))
     match = fixture("match_parsed.json")
     original = bot.TRACKED_STEAM_IDS
     bot.TRACKED_STEAM_IDS = expected["tracked_steam_ids"]
     try:
-        analysis = bot.build_match_analysis(match)
-        panel = bot.build_verified_match_facts(match, analysis)
+        analysis = bot.build_match_analysis(match, game)
+        panel = bot.build_verified_match_facts(match, analysis, game)
         return expected, {
             "tracked_steam_ids": expected["tracked_steam_ids"],
             "analysis": analysis,
             "panel": panel,
             "panel_chunks": bot.chunk_debrief(panel),
-            "item_catalog_size": len(bot.build_current_item_catalog()),
-            "no_full_5v5": bot.summarize_teamfights(match_without_full_five_v_fives()),
-            "empty_teamfights": bot.summarize_teamfights(match_without_teamfights()),
+            "item_catalog_size": len(game.item_catalog()),
+            "no_full_5v5": bot.summarize_teamfights(match_without_full_five_v_fives(), game),
+            "empty_teamfights": bot.summarize_teamfights(match_without_teamfights(), game),
         }
     finally:
         bot.TRACKED_STEAM_IDS = original
