@@ -12,6 +12,7 @@ import discord
 from aiohttp import web
 from discord.ext import commands, tasks
 
+from state import MatchState
 from config import (
     BUG_RETRY_LIMIT,
     CHANNEL_ID,
@@ -47,7 +48,7 @@ CURRENT_PATCH_NAME = None
 GAME_DATA_LAST_REFRESH = 0.0
 GAME_DATA_LAST_ATTEMPT = 0.0
 RANKED_HERO_SAMPLE_CACHE = {}
-MATCH_STATE = {"accounts": {}, "pending": []}
+STATE = MatchState(STATE_FILE)
 STATE_LOADED = False
 WEB_RUNNER = None
 
@@ -87,88 +88,6 @@ def report_unexpected(where: str, exc: BaseException) -> None:
     traceback.print_exc()
 
 
-def clear_blocked_flags(state: dict) -> dict:
-    """A fresh process is usually a redeploy, so give parked matches another try."""
-    for item in state.get("pending", []):
-        if item.pop("blocked", None):
-            item["attempts"] = 0
-            item["next_attempt_at"] = 0
-            print(f"[QUEUE] Unparked match {item.get('match_id')} after restart.", flush=True)
-    return state
-
-
-def load_match_state() -> dict:
-    try:
-        state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
-        # Migrate the one-cursor state file made by the earlier version.
-        if "last_processed_match" in state and TRACKED_STEAM_IDS:
-            old_cursor = state.get("last_processed_match")
-            if old_cursor is not None:
-                account_id = str(TRACKED_STEAM_IDS[0])
-                return {
-                    "accounts": {
-                        account_id: {
-                            "last_processed_match": int(old_cursor),
-                            "discovered_through_match": int(old_cursor),
-                        }
-                    },
-                    "pending": [],
-                }
-        accounts = state.get("accounts", {})
-        pending = state.get("pending", [])
-        if not isinstance(accounts, dict) or not isinstance(pending, list):
-            raise ValueError("state must contain an accounts object and pending list")
-        return {"accounts": accounts, "pending": pending}
-    except FileNotFoundError:
-        return {"accounts": {}, "pending": []}
-    except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
-        print(f"[STATE] Could not read {STATE_FILE}: {exc}", flush=True)
-        return {"accounts": {}, "pending": []}
-
-
-def save_match_state() -> None:
-    """Persist per-account cursors and queued matches atomically."""
-    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    temporary_file = STATE_FILE.with_suffix(STATE_FILE.suffix + ".tmp")
-    temporary_file.write_text(json.dumps(MATCH_STATE), encoding="utf-8")
-    os.replace(temporary_file, STATE_FILE)
-
-
-def defer_pending_match(account_id: int, match_id: int, reason: str, fatal: bool = False) -> None:
-    """Back off on a failed match without blocking later matches in the queue.
-
-    `fatal` marks a failure that retrying cannot fix, such as a logic error. Those
-    are parked after BUG_RETRY_LIMIT attempts instead of retried forever, because a
-    deterministic failure retried on a timer only buries the log line that explains
-    it. Parked matches stay in the queue and are released on the next restart.
-    """
-    for item in MATCH_STATE["pending"]:
-        if int(item.get("account_id", -1)) == account_id and int(item.get("match_id", -1)) == match_id:
-            attempts = int(item.get("attempts", 0)) + 1
-            delay_seconds = min(
-                RETRY_BACKOFF_MAX_SECONDS,
-                RETRY_BACKOFF_BASE_SECONDS * (2 ** (attempts - 1)),
-            )
-            item["attempts"] = attempts
-            item["next_attempt_at"] = time.time() + delay_seconds
-            if fatal and attempts >= BUG_RETRY_LIMIT:
-                item["blocked"] = True
-                print(
-                    f"[BLOCKED] Match {match_id} parked after {attempts} attempts at "
-                    f"{reason}. This needs a code fix, not a retry; it will be released "
-                    f"on the next restart.",
-                    flush=True,
-                )
-            else:
-                print(
-                    f"[RETRY] Match {match_id} deferred for {delay_seconds // 60} minute(s) "
-                    f"after {reason}; attempt {attempts}.",
-                    flush=True,
-                )
-            save_match_state()
-            return
-
-
 async def discover_unseen_matches(session: aiohttp.ClientSession, account_id: int):
     """Queue every listed match newer than this account's saved cursor.
 
@@ -176,19 +95,12 @@ async def discover_unseen_matches(session: aiohttp.ClientSession, account_id: in
     backwards until the cursor is reached, so multiple matches are not skipped.
     """
     account_key = str(account_id)
-    account_state = MATCH_STATE["accounts"].setdefault(
-        account_key,
-        {"last_processed_match": None, "discovered_through_match": None},
-    )
+    account_state = STATE.account(account_id)
     cursor = account_state.get("last_processed_match")
     cursor = int(cursor) if cursor is not None else None
     watermark = account_state.get("discovered_through_match", cursor)
     watermark = int(watermark) if watermark is not None else None
-    known = {
-        (str(item.get("account_id")), int(item.get("match_id")))
-        for item in MATCH_STATE["pending"]
-        if isinstance(item, dict) and item.get("account_id") is not None and item.get("match_id") is not None
-    }
+    known = STATE.queued_keys()
 
     offset = 0
     found_watermark = False
@@ -221,10 +133,10 @@ async def discover_unseen_matches(session: aiohttp.ClientSession, account_id: in
         if watermark is None and first_page:
             newest = next((m.get("match_id") for m in page if m.get("match_id") is not None), None)
             if newest is not None:
-                MATCH_STATE["pending"].append({"account_id": account_id, "match_id": int(newest)})
+                STATE.queue(account_id, int(newest))
                 account_state["discovered_through_match"] = int(newest)
                 print(f"[HISTORY] First run: queued latest match {newest} for account {account_id}.", flush=True)
-            save_match_state()
+            STATE.save()
             return
 
         for match in page:
@@ -237,12 +149,12 @@ async def discover_unseen_matches(session: aiohttp.ClientSession, account_id: in
                 continue
             key = (account_key, match_id)
             if key not in known:
-                MATCH_STATE["pending"].append({"account_id": account_id, "match_id": match_id})
+                STATE.queue(account_id, match_id)
                 known.add(key)
             if newest_discovered is None or match_id > newest_discovered:
                 newest_discovered = match_id
 
-        save_match_state()
+        STATE.save()
         if found_watermark or len(page) < HISTORY_PAGE_SIZE:
             break
         offset += len(page)
@@ -256,7 +168,7 @@ async def discover_unseen_matches(session: aiohttp.ClientSession, account_id: in
         print(f"[HISTORY] Reached discovery cursor {watermark} for account {account_id}.", flush=True)
     if newest_discovered is not None:
         account_state["discovered_through_match"] = newest_discovered
-    save_match_state()
+    STATE.save()
 
 
 async def load_hero_constants(force: bool = False):
@@ -1365,15 +1277,10 @@ async def check_recent_matches():
             for account_id in TRACKED_STEAM_IDS:
                 await discover_unseen_matches(session, account_id)
 
-            if not MATCH_STATE["pending"]:
+            if not STATE.pending:
                 return
 
-            now = time.time()
-            eligible = [
-                item for item in MATCH_STATE["pending"]
-                if float(item.get("next_attempt_at", 0)) <= now
-                and not item.get("blocked")
-            ]
+            eligible = STATE.eligible()
             if not eligible:
                 return
 
@@ -1389,13 +1296,13 @@ async def check_recent_matches():
                     channel = await bot.fetch_channel(CHANNEL_ID)
                 except discord.DiscordException as exc:
                     print(f"[DISCORD] Could not access channel {CHANNEL_ID}: {exc}", flush=True)
-                    defer_pending_match(account_id, match_id, "Discord channel unavailable")
+                    STATE.defer(account_id, match_id, "Discord channel unavailable")
                     return
 
             match_data = await fetch_parsed_match(session, match_id)
             if not match_data:
                 print(f"[RETRY] Match {match_id} is not ready; will retry next cycle.", flush=True)
-                defer_pending_match(account_id, match_id, "OpenDota match data unavailable")
+                STATE.defer(account_id, match_id, "OpenDota match data unavailable")
                 return
 
             await add_ranked_context(session, match_data)
@@ -1404,7 +1311,7 @@ async def check_recent_matches():
             debrief_text = await generate_ai_coaching_debrief(match_data, analysis)
             if not debrief_text:
                 print(f"[RETRY] AI providers failed for match {match_id}; will retry next cycle.", flush=True)
-                defer_pending_match(account_id, match_id, "AI providers unavailable")
+                STATE.defer(account_id, match_id, "AI providers unavailable")
                 return
 
             verified_facts = build_verified_match_facts(match_data, analysis)
@@ -1423,28 +1330,16 @@ async def check_recent_matches():
                 embed.set_footer(text=f"OpenDota Telemetry Engine | Part {idx} of {total_parts}")
                 await channel.send(embed=embed)
 
-            # Remove only after every part was accepted by Discord. The queue is
-            # durable, so parse/provider/send failures leave the match for retry.
-            MATCH_STATE["pending"] = [
-                item for item in MATCH_STATE["pending"]
-                if not (
-                    int(item["account_id"]) == account_id
-                    and int(item["match_id"]) == match_id
-                )
-            ]
-            MATCH_STATE["accounts"].setdefault(str(account_id), {})[
-                "last_processed_match"
-            ] = match_id
-            save_match_state()
+            STATE.complete(account_id, match_id)
             print(f"[QUEUE] Successfully delivered match {match_id}.", flush=True)
     except (discord.DiscordException,) + TRANSIENT_ERRORS as exc:
         print(f"[POLL] Transient failure during match polling: {exc}", flush=True)
         if "account_id" in locals() and "match_id" in locals():
-            defer_pending_match(account_id, match_id, "a transient service failure")
+            STATE.defer(account_id, match_id, "a transient service failure")
     except Exception as exc:
         report_unexpected("processing a queued match", exc)
         if "account_id" in locals() and "match_id" in locals():
-            defer_pending_match(
+            STATE.defer(
                 account_id, match_id, "an unexpected processing error", fatal=True
             )
 
@@ -1464,10 +1359,10 @@ bot = CoachingBot(command_prefix="!", intents=intents)
 
 @bot.event
 async def on_ready():
-    global MATCH_STATE, STATE_LOADED
+    global STATE, STATE_LOADED
     print(f"[BOT] Logged in as {bot.user} (ID: {bot.user.id})", flush=True)
     if not STATE_LOADED:
-        MATCH_STATE = clear_blocked_flags(load_match_state())
+        STATE = MatchState.load(STATE_FILE, TRACKED_STEAM_IDS).release_blocked()
         STATE_LOADED = True
     if not check_recent_matches.is_running():
         check_recent_matches.start()

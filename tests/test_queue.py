@@ -8,95 +8,125 @@ import pathlib
 import tempfile
 import time
 
-from _support import main_module
+from _support import main_module, state_module
 
 
-def _isolated_state():
-    bot = main_module()
-    bot.STATE_FILE = pathlib.Path(tempfile.mkdtemp()) / "state.json"
-    bot.MATCH_STATE = {
-        "accounts": {},
-        "pending": [
-            {"account_id": 1, "match_id": 100},
-            {"account_id": 1, "match_id": 101},
-        ],
-    }
-    return bot
-
-
-def _item(bot, match_id):
-    return next(i for i in bot.MATCH_STATE["pending"] if i["match_id"] == match_id)
-
-
-def _eligible(bot):
-    now = time.time()
-    return [
-        i["match_id"] for i in bot.MATCH_STATE["pending"]
-        if float(i.get("next_attempt_at", 0)) <= now and not i.get("blocked")
-    ]
+def _queue():
+    """A MatchState on a throwaway path, holding two queued matches."""
+    MatchState = state_module().MatchState
+    path = pathlib.Path(tempfile.mkdtemp()) / "state.json"
+    return MatchState(path, pending=[
+        {"account_id": 1, "match_id": 100},
+        {"account_id": 1, "match_id": 101},
+    ])
 
 
 def test_backoff_doubles_then_holds_at_the_ceiling():
-    bot = _isolated_state()
+    queue = _queue()
     delays = []
     for _ in range(8):
         before = time.time()
-        bot.defer_pending_match(1, 100, "a transient service failure")
-        delays.append(round(_item(bot, 100)["next_attempt_at"] - before))
+        queue.defer(1, 100, "a transient service failure")
+        delays.append(round(queue.find(1, 100)["next_attempt_at"] - before))
     assert delays == [60, 120, 240, 480, 960, 1920, 1920, 1920]
-    assert max(delays) == bot.RETRY_BACKOFF_MAX_SECONDS
+
+
+def test_backoff_formula_is_capped():
+    state = state_module()
+    assert [state.backoff_seconds(n) for n in range(1, 9)] == \
+        [60, 120, 240, 480, 960, 1920, 1920, 1920]
+    assert state.backoff_seconds(40) == state.RETRY_BACKOFF_MAX_SECONDS
 
 
 def test_transient_failures_never_park_a_match():
-    bot = _isolated_state()
-    for _ in range(bot.BUG_RETRY_LIMIT + 5):
-        bot.defer_pending_match(1, 100, "a transient service failure")
-    assert not _item(bot, 100).get("blocked")
+    queue = _queue()
+    for _ in range(main_module().BUG_RETRY_LIMIT + 5):
+        queue.defer(1, 100, "a transient service failure")
+    assert not queue.find(1, 100).get("blocked")
 
 
 def test_a_defect_parks_the_match_at_the_limit():
-    bot = _isolated_state()
-    for attempt in range(1, bot.BUG_RETRY_LIMIT):
-        bot.defer_pending_match(1, 100, "an unexpected processing error", fatal=True)
-        assert not _item(bot, 100).get("blocked"), f"parked early on attempt {attempt}"
-    bot.defer_pending_match(1, 100, "an unexpected processing error", fatal=True)
-    assert _item(bot, 100)["blocked"] is True
+    queue = _queue()
+    limit = main_module().BUG_RETRY_LIMIT
+    for attempt in range(1, limit):
+        queue.defer(1, 100, "an unexpected processing error", fatal=True)
+        assert not queue.find(1, 100).get("blocked"), f"parked early on attempt {attempt}"
+    queue.defer(1, 100, "an unexpected processing error", fatal=True)
+    assert queue.find(1, 100)["blocked"] is True
 
 
 def test_a_parked_match_does_not_hold_up_the_queue():
-    bot = _isolated_state()
-    for _ in range(bot.BUG_RETRY_LIMIT):
-        bot.defer_pending_match(1, 100, "an unexpected processing error", fatal=True)
-    _item(bot, 100)["next_attempt_at"] = 0
-    eligible = _eligible(bot)
+    queue = _queue()
+    for _ in range(main_module().BUG_RETRY_LIMIT):
+        queue.defer(1, 100, "an unexpected processing error", fatal=True)
+    queue.find(1, 100)["next_attempt_at"] = 0
+    eligible = [item["match_id"] for item in queue.eligible()]
     assert 100 not in eligible
     assert 101 in eligible
 
 
+def test_deferring_an_unknown_match_is_a_no_op():
+    queue = _queue()
+    queue.defer(1, 999, "a transient service failure")
+    assert queue.find(1, 999) is None
+
+
 def test_state_round_trips_and_a_restart_releases_parked_matches():
-    bot = _isolated_state()
-    for _ in range(bot.BUG_RETRY_LIMIT):
-        bot.defer_pending_match(1, 100, "an unexpected processing error", fatal=True)
-    bot.save_match_state()
-    assert not list(bot.STATE_FILE.parent.glob("*.tmp")), "atomic write left a temp file"
+    MatchState = state_module().MatchState
+    queue = _queue()
+    for _ in range(main_module().BUG_RETRY_LIMIT):
+        queue.defer(1, 100, "an unexpected processing error", fatal=True)
+    queue.save()
+    assert not list(queue.path.parent.glob("*.tmp")), "atomic write left a temp file"
 
-    reloaded = bot.load_match_state()
-    assert any(i.get("blocked") for i in reloaded["pending"])
+    reloaded = MatchState.load(queue.path)
+    assert any(item.get("blocked") for item in reloaded.pending)
 
-    released = bot.clear_blocked_flags(reloaded)
-    assert not any(i.get("blocked") for i in released["pending"])
-    assert all(i.get("attempts", 0) == 0 for i in released["pending"])
+    released = reloaded.release_blocked()
+    assert not any(item.get("blocked") for item in released.pending)
+    assert all(item.get("attempts", 0) == 0 for item in released.pending)
+
+
+def test_the_on_disk_format_is_unchanged():
+    # An existing deployment's state file must keep loading.
+    import json
+    queue = _queue()
+    queue.save()
+    stored = json.loads(queue.path.read_text(encoding="utf-8"))
+    assert sorted(stored) == ["accounts", "pending"]
+
+
+def test_a_legacy_single_cursor_file_migrates():
+    MatchState = state_module().MatchState
+    path = pathlib.Path(tempfile.mkdtemp()) / "state.json"
+    path.write_text('{"last_processed_match": 555}', encoding="utf-8")
+    migrated = MatchState.load(path, tracked_steam_ids=[243689827])
+    assert migrated.accounts["243689827"]["last_processed_match"] == 555
+    assert migrated.accounts["243689827"]["discovered_through_match"] == 555
+    assert migrated.pending == []
 
 
 def test_a_corrupt_state_file_yields_empty_state():
-    bot = _isolated_state()
-    bot.STATE_FILE.write_text("{not json", encoding="utf-8")
-    assert bot.load_match_state() == {"accounts": {}, "pending": []}
+    MatchState = state_module().MatchState
+    path = pathlib.Path(tempfile.mkdtemp()) / "state.json"
+    path.write_text("{not json", encoding="utf-8")
+    loaded = MatchState.load(path)
+    assert loaded.accounts == {} and loaded.pending == []
 
 
 def test_a_missing_state_file_yields_empty_state():
-    bot = _isolated_state()
-    assert bot.load_match_state() == {"accounts": {}, "pending": []}
+    MatchState = state_module().MatchState
+    path = pathlib.Path(tempfile.mkdtemp()) / "state.json"
+    loaded = MatchState.load(path)
+    assert loaded.accounts == {} and loaded.pending == []
+
+
+def test_completing_a_match_drops_it_and_advances_the_cursor():
+    queue = _queue()
+    queue.complete(1, 100)
+    assert queue.find(1, 100) is None
+    assert queue.find(1, 101) is not None
+    assert queue.accounts["1"]["last_processed_match"] == 100
 
 
 def test_logic_errors_are_not_classified_as_transient():

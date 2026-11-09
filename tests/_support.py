@@ -184,6 +184,13 @@ def main_module():
     return _main
 
 
+def state_module():
+    """The queue module, with stubs already installed by importing main."""
+    main_module()
+    import state
+    return state
+
+
 def with_constants():
     """Return main.py with its game-data maps loaded from the fixture."""
     module = main_module()
