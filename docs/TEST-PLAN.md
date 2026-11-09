@@ -118,6 +118,12 @@ unnoticed:
   assertion is `len(HERO_ABILITY_MAP) == len(HERO_NAME_MAP)`. A fixture containing Monkey King's
   nested ability list is enough; no network needed.
 - **`defer_pending_match` never exceeds `RETRY_BACKOFF_MAX_SECONDS`** (`8aafab5`).
+- **A transient failure never parks a match, an unexpected one parks it after `BUG_RETRY_LIMIT`**,
+  a parked match is excluded from the eligibility filter while its siblings stay eligible, and
+  `clear_blocked_flags` releases it with `attempts` reset. All pure, no network, no Discord.
+- **`TRANSIENT_ERRORS` excludes `KeyError`, `TypeError` and `AttributeError`.** A one-line
+  `issubclass` assertion, and it is the guard that keeps the two bugs above from being absorbed
+  again.
 
 ## Not worth testing yet
 

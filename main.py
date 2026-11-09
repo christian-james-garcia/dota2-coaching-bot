@@ -30,6 +30,17 @@ RANKED_MATCH_SCAN_PAGE_SIZE = 100
 RANKED_MATCH_SCAN_MAX_PAGES = 12
 RETRY_BACKOFF_BASE_SECONDS = 60
 RETRY_BACKOFF_MAX_SECONDS = 32 * 60  # the base doubling five times
+BUG_RETRY_LIMIT = 3
+
+# Failures that mean the network or a remote service misbehaved, and that a later
+# attempt may well survive. Anything else escaping an I/O block is a defect in
+# this file: it is reported as one rather than counted as an outage.
+TRANSIENT_ERRORS = (
+    aiohttp.ClientError,
+    asyncio.TimeoutError,
+    OSError,
+    json.JSONDecodeError,
+)
 
 HERO_NAME_MAP = {}
 HERO_UNIT_NAME_MAP = {}
@@ -74,6 +85,27 @@ async def start_web_server():
     print(f"[SERVER] Web server successfully bound to port {port}", flush=True)
 
 
+def report_unexpected(where: str, exc: BaseException) -> None:
+    """Log a logic error distinctly so it is not read as a service outage.
+
+    Every I/O block here degrades gracefully on a transient failure, which is
+    correct, but the same handler used to absorb KeyError and TypeError as well.
+    A defect then looked exactly like OpenDota having a bad minute.
+    """
+    print(f"[BUG] {where}: {type(exc).__name__}: {exc}", flush=True)
+    traceback.print_exc()
+
+
+def clear_blocked_flags(state: dict) -> dict:
+    """A fresh process is usually a redeploy, so give parked matches another try."""
+    for item in state.get("pending", []):
+        if item.pop("blocked", None):
+            item["attempts"] = 0
+            item["next_attempt_at"] = 0
+            print(f"[QUEUE] Unparked match {item.get('match_id')} after restart.", flush=True)
+    return state
+
+
 def load_match_state() -> dict:
     try:
         state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
@@ -111,8 +143,14 @@ def save_match_state() -> None:
     os.replace(temporary_file, STATE_FILE)
 
 
-def defer_pending_match(account_id: int, match_id: int, reason: str) -> None:
-    """Back off on a failed match without blocking later matches in the queue."""
+def defer_pending_match(account_id: int, match_id: int, reason: str, fatal: bool = False) -> None:
+    """Back off on a failed match without blocking later matches in the queue.
+
+    `fatal` marks a failure that retrying cannot fix, such as a logic error. Those
+    are parked after BUG_RETRY_LIMIT attempts instead of retried forever, because a
+    deterministic failure retried on a timer only buries the log line that explains
+    it. Parked matches stay in the queue and are released on the next restart.
+    """
     for item in MATCH_STATE["pending"]:
         if int(item.get("account_id", -1)) == account_id and int(item.get("match_id", -1)) == match_id:
             attempts = int(item.get("attempts", 0)) + 1
@@ -122,11 +160,20 @@ def defer_pending_match(account_id: int, match_id: int, reason: str) -> None:
             )
             item["attempts"] = attempts
             item["next_attempt_at"] = time.time() + delay_seconds
-            print(
-                f"[RETRY] Match {match_id} deferred for {delay_seconds // 60} minute(s) "
-                f"after {reason}; attempt {attempts}.",
-                flush=True,
-            )
+            if fatal and attempts >= BUG_RETRY_LIMIT:
+                item["blocked"] = True
+                print(
+                    f"[BLOCKED] Match {match_id} parked after {attempts} attempts at "
+                    f"{reason}. This needs a code fix, not a retry; it will be released "
+                    f"on the next restart.",
+                    flush=True,
+                )
+            else:
+                print(
+                    f"[RETRY] Match {match_id} deferred for {delay_seconds // 60} minute(s) "
+                    f"after {reason}; attempt {attempts}.",
+                    flush=True,
+                )
             save_match_state()
             return
 
@@ -169,8 +216,11 @@ async def discover_unseen_matches(session: aiohttp.ClientSession, account_id: in
                     print(f"[HISTORY] Fetch failed for account {account_id}: HTTP {resp.status}", flush=True)
                     return
                 page = await resp.json()
-        except Exception as exc:
+        except TRANSIENT_ERRORS as exc:
             print(f"[HISTORY] Fetch error for account {account_id}: {exc}", flush=True)
+            return
+        except Exception as exc:
+            report_unexpected(f"history fetch for account {account_id}", exc)
             return
 
         if not page:
@@ -248,9 +298,12 @@ async def load_hero_constants(force: bool = False):
                 else:
                     refreshed_everything = False
                     print(f"[PATCH] Failed to fetch patch constants. Status: {resp.status}", flush=True)
+        except TRANSIENT_ERRORS as exc:
+            refreshed_everything = False
+            print(f"[PATCH] Could not load patch constants: {exc}", flush=True)
         except Exception as exc:
             refreshed_everything = False
-            print(f"[PATCH] Exception loading patch constants: {exc}", flush=True)
+            report_unexpected("parsing patch constants", exc)
 
         try:
             async with session.get("https://api.opendota.com/api/heroes") as resp:
@@ -262,9 +315,12 @@ async def load_hero_constants(force: bool = False):
                 else:
                     refreshed_everything = False
                     print(f"[HEROES] Failed to fetch hero constants. Status: {resp.status}", flush=True)
+        except TRANSIENT_ERRORS as exc:
+            refreshed_everything = False
+            print(f"[HEROES] Could not load hero constants: {exc}", flush=True)
         except Exception as exc:
             refreshed_everything = False
-            print(f"[HEROES] Exception loading hero constants: {exc}", flush=True)
+            report_unexpected("parsing hero constants", exc)
 
         try:
             async with session.get("https://api.opendota.com/api/constants/items") as resp:
@@ -293,9 +349,12 @@ async def load_hero_constants(force: bool = False):
                 else:
                     refreshed_everything = False
                     print(f"[ITEMS] Failed to fetch item constants. Status: {resp.status}", flush=True)
+        except TRANSIENT_ERRORS as exc:
+            refreshed_everything = False
+            print(f"[ITEMS] Could not load item constants: {exc}", flush=True)
         except Exception as exc:
             refreshed_everything = False
-            print(f"[ITEMS] Exception loading item constants: {exc}", flush=True)
+            report_unexpected("parsing item constants", exc)
 
         try:
             async with session.get("https://api.opendota.com/api/constants/hero_abilities") as hero_resp:
@@ -346,9 +405,12 @@ async def load_hero_constants(force: bool = False):
                             f"hero HTTP {hero_resp.status}, abilities HTTP {ability_resp.status}",
                             flush=True,
                         )
+        except TRANSIENT_ERRORS as exc:
+            refreshed_everything = False
+            print(f"[ABILITIES] Could not load ability constants: {exc}", flush=True)
         except Exception as exc:
             refreshed_everything = False
-            print(f"[ABILITIES] Exception loading ability constants: {exc}", flush=True)
+            report_unexpected("parsing ability constants", exc)
 
         if refreshed_everything:
             GAME_DATA_LAST_REFRESH = time.time()
@@ -393,8 +455,11 @@ async def get_ranked_hero_sample(
             cursor = page[-1].get("match_id")
             if len(candidates) >= RANKED_DETAIL_CANDIDATE_LIMIT or not cursor or len(page) < RANKED_MATCH_SCAN_PAGE_SIZE:
                 break
-    except Exception as exc:
+    except TRANSIENT_ERRORS as exc:
         print(f"[RANKED] Could not scan public matches for hero {hero_id}: {exc}", flush=True)
+        return {"available": False, "reason": "OpenDota public ranked match data is temporarily unavailable."}
+    except Exception as exc:
+        report_unexpected(f"scanning public ranked matches for hero {hero_id}", exc)
         return {"available": False, "reason": "OpenDota public ranked match data is temporarily unavailable."}
 
     role_names = {1: "Safe lane", 2: "Mid lane", 3: "Off lane", 4: "Jungle", 5: "Roaming"}
@@ -406,8 +471,11 @@ async def get_ranked_hero_sample(
                 if resp.status != 200:
                     continue
                 detail = await resp.json()
-        except Exception as exc:
+        except TRANSIENT_ERRORS as exc:
             print(f"[RANKED] Could not fetch public ranked match {match_id}: {exc}", flush=True)
+            continue
+        except Exception as exc:
+            report_unexpected(f"reading public ranked match {match_id}", exc)
             continue
 
         if detail.get("lobby_type") != 7 or detail.get("patch") != int(patch_id):
@@ -532,8 +600,10 @@ async def fetch_opendota_match(session: aiohttp.ClientSession, match_id: int):
             if resp.status == 200:
                 return await resp.json()
             print(f"[OPENDOTA] Match {match_id} fetch failed with status {resp.status}", flush=True)
-    except Exception as exc:
+    except TRANSIENT_ERRORS as exc:
         print(f"[OPENDOTA] Error fetching match {match_id}: {exc}", flush=True)
+    except Exception as exc:
+        report_unexpected(f"fetching match {match_id}", exc)
     return None
 
 
@@ -552,8 +622,10 @@ async def fetch_parsed_match(session: aiohttp.ClientSession, match_id: int):
     try:
         async with session.post(request_url) as resp:
             print(f"[OPENDOTA] Parse request status: {resp.status}", flush=True)
-    except Exception as exc:
+    except TRANSIENT_ERRORS as exc:
         print(f"[OPENDOTA] Parse request failed for {match_id}: {exc}", flush=True)
+    except Exception as exc:
+        report_unexpected(f"requesting a parse of match {match_id}", exc)
 
     for attempt in range(6):
         if attempt:
@@ -1180,8 +1252,10 @@ async def generate_ai_coaching_debrief(match_data: dict, analysis: dict) -> Opti
                     else:
                         error_body = (await resp.text())[:500]
                         print(f"[{provider_name}] Model {model_slug} status ({resp.status}): {error_body}", flush=True)
-            except Exception as exc:
+            except TRANSIENT_ERRORS as exc:
                 print(f"[{provider_name}] Request failed for {model_slug}: {exc}", flush=True)
+            except Exception as exc:
+                report_unexpected(f"{provider_name} request with {model_slug}", exc)
             return None
 
         for provider_name, url, headers, models in providers:
@@ -1272,6 +1346,7 @@ async def check_recent_matches():
             eligible = [
                 item for item in MATCH_STATE["pending"]
                 if float(item.get("next_attempt_at", 0)) <= now
+                and not item.get("blocked")
             ]
             if not eligible:
                 return
@@ -1336,11 +1411,16 @@ async def check_recent_matches():
             ] = match_id
             save_match_state()
             print(f"[QUEUE] Successfully delivered match {match_id}.", flush=True)
-    except Exception as exc:
-        print(f"[POLL ERROR] Exception during match polling: {exc}", flush=True)
-        traceback.print_exc()
+    except (discord.DiscordException,) + TRANSIENT_ERRORS as exc:
+        print(f"[POLL] Transient failure during match polling: {exc}", flush=True)
         if "account_id" in locals() and "match_id" in locals():
-            defer_pending_match(account_id, match_id, "unexpected processing error")
+            defer_pending_match(account_id, match_id, "a transient service failure")
+    except Exception as exc:
+        report_unexpected("processing a queued match", exc)
+        if "account_id" in locals() and "match_id" in locals():
+            defer_pending_match(
+                account_id, match_id, "an unexpected processing error", fatal=True
+            )
 
 
 class CoachingBot(commands.Bot):
@@ -1361,7 +1441,7 @@ async def on_ready():
     global MATCH_STATE, STATE_LOADED
     print(f"[BOT] Logged in as {bot.user} (ID: {bot.user.id})", flush=True)
     if not STATE_LOADED:
-        MATCH_STATE = load_match_state()
+        MATCH_STATE = clear_blocked_flags(load_match_state())
         STATE_LOADED = True
     if not check_recent_matches.is_running():
         check_recent_matches.start()

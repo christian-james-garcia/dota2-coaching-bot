@@ -167,7 +167,21 @@ this hides.
 abort the loop before `HERO_ABILITY_MAP` was assigned — losing ability data for all 127 heroes
 because of one. The prompt declares that data authoritative, so the guard it supports was inert.
 
-The shared lesson for the refactor: both failures were invisible because the broad handlers in
-`load_hero_constants` and `check_recent_matches` convert bugs into retries. When these move into
-modules, narrow the `except Exception` clauses to the exceptions actually expected from I/O, so a
-`KeyError` or `TypeError` in pure logic surfaces instead of becoming a backoff.
+The shared lesson: both failures were invisible because the broad handlers in
+`load_hero_constants` and `check_recent_matches` converted defects into retries. That has since
+been addressed directly rather than left for the split.
+
+Each of the eleven `try` blocks now handles `TRANSIENT_ERRORS` first — `aiohttp.ClientError`,
+`TimeoutError`, `OSError`, `json.JSONDecodeError` — and routes anything else through
+`report_unexpected()`, which prints a `[BUG]` line plus a traceback. `KeyError`, `TypeError` and
+`AttributeError` are deliberately not in that tuple, since those are the two bugs above.
+
+The poll loop goes further: a transient failure still retries on the existing backoff forever,
+while an unexpected one is parked after `BUG_RETRY_LIMIT` attempts. Retrying a deterministic
+failure on a timer only buries the log line that explains it. Parked matches stay in the queue,
+are skipped by the eligibility filter so they do not consume cycles, and are released on the next
+restart — which for this deploy target usually means a redeploy carrying the fix.
+
+For the refactor this means the error-handling policy is already one decision in two constants
+rather than eleven scattered handlers, so moving code into modules no longer risks changing it by
+accident.
