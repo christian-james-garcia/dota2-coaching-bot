@@ -13,8 +13,8 @@ import json
 import os
 import sys
 
-from _support import FIXTURES, analysis_module, fixture, game_data, main_module, \
-    match_without_full_five_v_fives, match_without_teamfights
+from _support import FIXTURES, analysis_module, coaching_module, fixture, game_data, \
+    main_module, match_without_full_five_v_fives, match_without_teamfights
 
 GOLDEN = os.path.join(FIXTURES, "golden_output.json")
 
@@ -34,6 +34,7 @@ def _actual():
         "panel": panel,
         "panel_chunks": bot.chunk_debrief(panel),
         "item_catalog_size": len(game.item_catalog()),
+        "coach_prompt": coaching_module().build_coach_prompt(match, analysis, game),
         "no_full_5v5": module.summarize_teamfights(match_without_full_five_v_fives(), game, []),
         "empty_teamfights": module.summarize_teamfights(match_without_teamfights(), game, []),
     }
@@ -61,6 +62,17 @@ def test_teamfight_edge_cases_are_unchanged():
     assert json.loads(json.dumps(actual["no_full_5v5"], sort_keys=True)) == \
         json.loads(json.dumps(expected["no_full_5v5"], sort_keys=True))
     assert actual["empty_teamfights"] == expected["empty_teamfights"]
+
+
+def test_the_coaching_prompt_is_byte_identical():
+    """The prompt is the single most consequential text in the project.
+
+    Everything the model is told not to invent is stated here, so a change to
+    it during a refactor is a change to the grounding, not to layout. This
+    expectation was captured from the code before coaching.py existed.
+    """
+    expected, actual = _actual()
+    assert actual["coach_prompt"] == expected["coach_prompt"]
 
 
 def test_item_catalog_size_is_unchanged():

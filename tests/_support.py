@@ -196,6 +196,13 @@ def tracked_ids(match):
     return sorted(p["account_id"] for p in match["players"] if p.get("account_id"))[:1]
 
 
+def coaching_module():
+    """The coaching module, with stubs already installed."""
+    main_module()
+    import coaching
+    return coaching
+
+
 def state_module():
     """The queue module, with stubs already installed by importing main."""
     main_module()
