@@ -121,6 +121,33 @@ class MatchState:
                 print(f"[QUEUE] Unparked match {item.get('match_id')} after restart.", flush=True)
         return self
 
+    def accounts_without_a_cursor(self, tracked_ids) -> list:
+        """Tracked accounts this queue has never delivered a match for."""
+        return [
+            int(t) for t in tracked_ids
+            if self.accounts.get(str(t), {}).get("last_processed_match") is None
+        ]
+
+    def adopt_cursors(self, recovered: dict) -> "MatchState":
+        """Seed cursors from an external record of what was already delivered.
+
+        Only fills gaps: an account that already has a cursor keeps it, because
+        the stored value is authoritative and the external record is a fallback.
+        """
+        for account_id, match_id in recovered.items():
+            account = self.account(account_id)
+            if account.get("last_processed_match") is None:
+                account["last_processed_match"] = int(match_id)
+                account["discovered_through_match"] = int(match_id)
+                print(
+                    f"[RECOVER] Adopted cursor {match_id} for account {account_id}; "
+                    f"no stored cursor was found.",
+                    flush=True,
+                )
+        if recovered:
+            self.save()
+        return self
+
     def defer(self, account_id: int, match_id: int, reason: str, fatal: bool = False) -> None:
         """Back off on a failed match without blocking later matches in the queue.
 

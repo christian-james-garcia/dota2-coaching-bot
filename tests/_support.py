@@ -135,14 +135,21 @@ def _install_stubs():
 
     discord.Intents = _Intents
     class Embed:
-        """Records what was set, so delivery tests can assert on it."""
+        """Mirrors the attributes of discord.Embed that this project uses.
 
-        def __init__(self, **fields):
-            self.fields = dict(fields)
+        title, description and footer.text are read back by delivery.read_delivery,
+        so a stub that stored them anywhere else would let a mismatch pass.
+        """
+
+        def __init__(self, title=None, description=None, color=None, **extra):
+            self.title = title
+            self.description = description
+            self.color = color
             self.footer = None
+            self.fields = dict(extra)
 
         def set_footer(self, text=None):
-            self.footer = text
+            self.footer = types.SimpleNamespace(text=text)
 
     discord.Embed = Embed
     discord.Color = types.SimpleNamespace(purple=lambda: None)

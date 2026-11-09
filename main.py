@@ -19,7 +19,7 @@ from config import (
     TRACKED_STEAM_IDS,
     TRANSIENT_ERRORS,
 )
-from delivery import send_debrief
+from delivery import recover_cursors, send_debrief
 from facts import build_verified_match_facts
 from gamedata import GameData
 from health import start_web_server
@@ -59,10 +59,29 @@ class CoachingBot(commands.Bot):
         if not self.state_loaded:
             # A restart is usually a redeploy, so parked matches get another try.
             self.state = MatchState.load(STATE_FILE, TRACKED_STEAM_IDS).release_blocked()
+            await self.recover_missing_cursors()
             self.state_loaded = True
         if not self.poll_matches.is_running():
             self.poll_matches.start()
             print("[BOT] Match tracking loop started.", flush=True)
+
+    async def recover_missing_cursors(self):
+        """Rebuild cursors from the channel when the state file did not survive.
+
+        This host's filesystem is ephemeral, so the queue file is usually gone
+        after a redeploy. Discovery would then re-anchor to the newest listed
+        match and skip whatever was played during the downtime. What was actually
+        posted is recorded in the channel, so that is read instead.
+        """
+        missing = self.state.accounts_without_a_cursor(TRACKED_STEAM_IDS)
+        if not missing:
+            return
+        print(f"[RECOVER] No stored cursor for account(s) {missing}; reading channel history.", flush=True)
+        channel = await self.resolve_channel()
+        if channel is None:
+            return
+        recovered = await recover_cursors(channel, self.user.id, missing)
+        self.state.adopt_cursors(recovered)
 
     async def resolve_channel(self):
         """The target channel, or None if Discord will not hand it over."""
@@ -103,7 +122,9 @@ class CoachingBot(commands.Bot):
             return
 
         verified_facts = build_verified_match_facts(match_data, analysis, self.game)
-        await send_debrief(channel, match_id, f"{verified_facts}\n\n---\n\n{debrief_text}")
+        await send_debrief(
+            channel, match_id, f"{verified_facts}\n\n---\n\n{debrief_text}", account_id
+        )
 
         # Only now: a failure above leaves the match queued for a full re-send.
         self.state.complete(account_id, match_id)

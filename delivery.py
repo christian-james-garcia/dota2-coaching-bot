@@ -5,6 +5,9 @@ has to respect Discord markdown: a bold marker separated from its partner shows
 up as literal asterisks, and the prompt asks for bold on exactly the takeaways
 meant to stand out.
 """
+import re
+from typing import Optional
+
 import discord
 
 EMBED_CHUNK_LIMIT = 3800
@@ -62,11 +65,19 @@ def chunk_debrief(text: str, max_len: int = 3800) -> list:
     return chunks
 
 
-async def send_debrief(channel, match_id: int, text: str) -> int:
+MATCH_IN_TITLE = re.compile(r"Match (\d+)")
+ACCOUNT_IN_FOOTER = re.compile(r"acct (\d+)")
+
+
+async def send_debrief(channel, match_id: int, text: str, account_id=None) -> int:
     """Send a debrief as one embed per chunk. Returns the number sent.
 
     The caller advances the queue only after this returns, so a failure part way
     through leaves the match queued and the whole debrief is re-sent later.
+
+    The match id goes in the title and the account id in the footer so that
+    `recover_cursors` can read back what was delivered. That makes the channel
+    itself the durable record, which matters on hosts with an ephemeral disk.
     """
     parts = chunk_debrief(text)
     total = len(parts)
@@ -74,7 +85,60 @@ async def send_debrief(channel, match_id: int, text: str) -> int:
         title = f"{TITLE} \u2014 Match {match_id}"
         if total > 1:
             title += f" (Part {index}/{total})"
+        footer = f"{FOOTER} | Part {index} of {total}"
+        if account_id is not None:
+            footer += f" | acct {account_id}"
         embed = discord.Embed(title=title, description=part, color=EMBED_COLOR())
-        embed.set_footer(text=f"{FOOTER} | Part {index} of {total}")
+        embed.set_footer(text=footer)
         await channel.send(embed=embed)
     return total
+
+
+def read_delivery(embed) -> tuple:
+    """(match_id, account_id) from a posted embed; either may be None."""
+    title = (getattr(embed, "title", None) or "") if not isinstance(embed, dict) else ""
+    footer = getattr(getattr(embed, "footer", None), "text", None)
+    if footer is None and isinstance(getattr(embed, "footer", None), str):
+        footer = embed.footer
+    match = MATCH_IN_TITLE.search(title or "")
+    account = ACCOUNT_IN_FOOTER.search(footer or "")
+    return (int(match.group(1)) if match else None,
+            int(account.group(1)) if account else None)
+
+
+async def recover_cursors(channel, author_id: int, tracked_ids, limit: int = 300) -> dict:
+    """Highest delivered match id per tracked account, read back from the channel.
+
+    The queue is written to disk, but on hosts with an ephemeral filesystem that
+    file is gone after every redeploy, and discovery then re-anchors to the newest
+    listed match and silently skips anything played during the downtime. The
+    channel is the one durable record of what was actually posted, so it is read
+    instead.
+
+    Embeds posted before the footer carried an account id are attributed to the
+    only tracked account when there is exactly one, and ignored otherwise, since
+    guessing which account an old post belonged to could skip matches.
+    """
+    tracked = [int(t) for t in tracked_ids]
+    sole_account = tracked[0] if len(tracked) == 1 else None
+    recovered = {}
+    try:
+        async for message in channel.history(limit=limit):
+            if getattr(message, "author", None) is None or message.author.id != author_id:
+                continue
+            for embed in getattr(message, "embeds", None) or []:
+                match_id, account_id = read_delivery(embed)
+                if match_id is None:
+                    continue
+                if account_id is None:
+                    account_id = sole_account
+                if account_id is None or account_id not in tracked:
+                    continue
+                if match_id > recovered.get(account_id, 0):
+                    recovered[account_id] = match_id
+    except discord.DiscordException as exc:
+        print(f"[RECOVER] Could not read channel history: {exc}", flush=True)
+        return {}
+    for account_id, match_id in recovered.items():
+        print(f"[RECOVER] Account {account_id} was last delivered match {match_id}.", flush=True)
+    return recovered

@@ -76,8 +76,8 @@ def test_send_debrief_sends_one_embed_per_chunk():
     assert _run(delivery.send_debrief(channel, 123, text)) == expected
     assert len(channel.sent) == expected
     assert expected > 1, "this fixture should need splitting"
-    assert f"(Part 1/{expected})" in channel.sent[0].fields["title"]
-    assert f"(Part {expected}/{expected})" in channel.sent[-1].fields["title"]
+    assert f"(Part 1/{expected})" in channel.sent[0].title
+    assert f"(Part {expected}/{expected})" in channel.sent[-1].title
 
 
 def test_a_short_debrief_is_a_single_embed():
@@ -87,9 +87,9 @@ def test_a_short_debrief_is_a_single_embed():
     assert len(channel.sent) == 1
     only = channel.sent[0]
     # A single-part debrief should not be labelled "Part 1/1".
-    assert "Part" not in only.fields["title"]
-    assert only.fields["description"] == "short debrief text"
-    assert only.footer == "OpenDota Telemetry Engine | Part 1 of 1"
+    assert "Part" not in only.title
+    assert only.description == "short debrief text"
+    assert only.footer.text == "OpenDota Telemetry Engine | Part 1 of 1"
 
 
 def test_a_failure_part_way_through_propagates():

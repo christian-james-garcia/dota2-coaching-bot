@@ -40,7 +40,7 @@ This was the main design problem, and most of the code exists to solve it:
 ## How it stays reliable
 
 - **Durable queue.** New matches are discovered into a pending list persisted to disk and written atomically
-  via a temp file plus `os.replace()`.
+  via a temp file plus `os.replace()`, and recovered from the channel if that file is gone.
 - **Per-account cursors.** Each tracked account has its own `last_processed_match`, so one stalled account
   doesn't block another.
 - **Exponential backoff.** A match that fails (unparsed data, provider outage, Discord error) is deferred
@@ -128,9 +128,9 @@ them and 23 of the 48 fail.
 ## Roadmap
 
 - [x] Move `CHANNEL_ID` and `TRACKED_STEAM_IDS` into configuration instead of source
-- [ ] Back the queue with a persistent store so Render restarts don't lose cursors
+- [x] Survive a Render restart by recovering cursors from the channel
 - [x] Split `main.py` into modules — 1365 lines became 158 across eleven modules
-- [x] Regression tests for the seven fixed bugs, with a dependency-free runner and CI
+- [x] Regression tests for the fixed bugs, with a dependency-free runner and CI
 - [ ] Widen coverage: hand-audited `summarize_teamfights` totals, full `extract_match_telemetry` cases
 - [x] Bound the match-history scan so an old cursor cannot walk the whole history
 - [ ] Cache OpenDota responses to reduce calls against the public rate limit
