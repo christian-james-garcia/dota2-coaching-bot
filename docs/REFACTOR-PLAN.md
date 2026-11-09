@@ -63,13 +63,13 @@ because it converts five of the six readers into pure functions.
 
 These are the things that will break quietly if moved carelessly.
 
-**1. `bot` is used before it is defined.** Still open. `check_recent_matches` reads `bot` at lines
+**1. `bot` is used before it is defined.** *(resolved in step 8: the queue, game data and loop are instance state on CoachingBot.)* `check_recent_matches` reads `bot` at lines
 1100 and 1103; `bot` is assigned at line 1164. This works only because the name resolves at call
 time, not definition time. Split naively and this becomes a circular import between the task loop
 and the bot module. Fix: pass `bot` (or just the resolved channel) into the loop as a parameter.
 Do not import it.
 
-**2. `request_completion` closes over `session`.** Still open; relevant to step 6. It is nested inside the
+**2. `request_completion` closes over `session`.** *(resolved in step 6: the session is its first argument.)* It is nested inside the
 `async with aiohttp.ClientSession(...)` block in `generate_ai_coaching_debrief`, not at module
 level. Moving it to `coaching/providers.py` means `session` must become an explicit first argument,
 and the caller must keep owning the session lifetime.
@@ -90,7 +90,7 @@ the ordering requirement now lives in that method's docstring.)* In `check_recen
 reordering here trades the at-least-once guarantee for silent match loss.
 
 **6. The poll loop's handlers** read `account_id` and `match_id` via `locals()` (two sites now,
-one per handler). Still open; relevant to step 8. If the loop body moves into a helper, that introspection stops working and the
+one per handler). *(resolved in step 8: account_id and match_id are named before the try.)* If the loop body moves into a helper, that introspection stops working and the
 deferral on unexpected errors silently does nothing.
 
 ## A real bug this surfaced (fixed in 2170689)
@@ -112,23 +112,24 @@ their callers.
 
 ## Migration order
 
-Each step leaves the bot runnable. Commit and verify between steps.
+**All eight steps are done.** `main.py` went from 1365 lines to 158 across eleven modules, with
+the golden output and the coaching prompt byte-identical at every step.
 
 - [x] **1. `config.py`** — env vars and tuning constants, plus `TRANSIENT_ERRORS` (`02944df`)
 - [x] **2. `state.py`** — `MatchState` owns the queue, cursors, backoff and persistence (`99a038d`)
 - [x] **3. `gamedata.py`** — `GameData` owns the nine constants maps; `reporting.py` splits out
       `report_unexpected` (`62e25f0`)
-- [ ] **4. `analysis.py`** — `extract_match_telemetry`, `summarize_teamfights`,
+- [x] **4. `analysis.py`** — `extract_match_telemetry`, `summarize_teamfights`,
       `build_match_analysis`. Already pure: constants arrive as a `GameData` argument and nothing
       is read from module scope. This is now plain code motion, the easiest remaining step.
-- [ ] **5. `facts.py`** — `build_verified_match_facts`, still 247 lines and the largest function in
+- [x] **5. `facts.py`** — `build_verified_match_facts`, still 247 lines and the largest function in
       the project. Worth breaking into per-section builders while moving it, which is the one
       remaining step where the golden test is doing real work rather than confirming the obvious.
-- [ ] **6. `coaching.py`** — the prompt, the provider chain, and `find_team_label_errors`. Mind
+- [x] **6. `coaching.py`** — the prompt, the provider chain, and `find_team_label_errors`. Mind
       hazard 2, which is still open.
-- [ ] **7. `delivery.py`** — `balanced_split_point`, `chunk_debrief`, and the embed construction
+- [x] **7. `delivery.py`** — `balanced_split_point`, `chunk_debrief`, and the embed construction
       currently inline in the poll loop.
-- [ ] **8. `main.py`** — wiring, the bot subclass, and the poll loop only.
+- [x] **8. `main.py`** — wiring, the bot subclass, and the poll loop only.
 
 ### A note on layout
 
