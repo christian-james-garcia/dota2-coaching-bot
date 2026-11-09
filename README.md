@@ -44,7 +44,7 @@ This was the main design problem, and most of the code exists to solve it:
 - **Per-account cursors.** Each tracked account has its own `last_processed_match`, so one stalled account
   doesn't block another.
 - **Exponential backoff.** A match that fails (unparsed data, provider outage, Discord error) is deferred
-  60s → 2m → 4m … capped at an hour, and later matches keep moving.
+  60s → 2m → 4m … capped at 32 minutes, and later matches keep moving.
 - **Delete-after-delivery.** A match leaves the queue only once every embed part is accepted by Discord.
 - **Provider fallback.** Google AI Studio (`gemini-3.8-flash`, then `gemini-3.5-flash-lite`), then Groq
   (`openai/gpt-oss-120b`).
